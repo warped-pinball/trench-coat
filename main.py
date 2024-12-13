@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext
 import sys
 import os
+import io
 import argparse
 from mpremote.commands import do_connect, do_exec, do_filesystem, do_disconnect
 from mpremote.main import State
@@ -20,9 +21,10 @@ def delete_path(state,path):
     try:
         cmd_args = argparse.Namespace(command=["rm"], path=[path], recursive=True, force=False, verbose=False)
         do_filesystem(state, cmd_args)
-        print(f"   Deleted: {path}")
+        print(f"   Deleted: {path}")        
     except Exception as e:
         print(f"   Error deleting {path}: {e}")
+
 
 def list_files(state,path=""):
     """List files and directories in the given path."""
@@ -72,8 +74,7 @@ def upload_to_pico(state, local_dir, pico_dir=""):
         # Construct the corresponding target path on the Pico
         target_dir = os.path.join(pico_dir, relative_path).replace("\\", "/")
 
-
-        #for now directories must exist...
+        #for now directories must exist. In the future create them? need to check if they exist first to avoid errors
         '''
         # Create the corresponding directory on the Pico
         if relative_path != ".":
@@ -95,60 +96,15 @@ def upload_to_pico(state, local_dir, pico_dir=""):
             )
 
 
-
-
-def erase_and_program():
-    """Perform the custom sequence of operations using mpremote."""
-    #from mpremote.main import State
-
-    state = State()
-
+#capture stdio output from mpremote functions as needed to place in window text box
+def capture_output(func, *args, **kwargs):   
+    old_stdout = sys.stdout  # Save the current stdout
+    sys.stdout = io.StringIO()  # Redirect stdout to a StringIO object
     try:
-        # 1. Connect to the device.
-        print("Connecting to the device...")
-        do_connect(state, argparse.Namespace(device=["auto"]))
-        root.update() 
-
-
-        # 2. Execute a script on the device.
-        print("Executing a script on the device...")
-        do_exec(state, argparse.Namespace(expr=["print('Hello from the custom app!')"], follow=True))
-
-        #print("----files 1")
-        #list_files(state)
-        #print("----files 2")
-        #list_files(state,"GameDefs")
-
-        print("\nFIND ALL and DELETE")
-        find_all(state)
-        print("\nFIND ALL DONE\n")
-
-        # 3. Copy a file to the device.
-        print("Uploading a files...")
-        #do_filesystem(
-        #    state,
-        #    argparse.Namespace(command=["cp"], path=["example.py", ":/example.py"], recursive=False, force=False, verbose=True)
-        #)
-        upload_to_pico(state, "PICO_CODE")
-
-
-        # 4. List files on the device.
-        #print("Listing files...")
-        #do_filesystem(state, argparse.Namespace(command=["ls"], path=[], recursive=False, force=False, verbose=False))
-
-        # 5. Disconnect from the device.
-        print("Disconnecting...")
-        do_disconnect(state)
-
-        print("Finished.")
-
-    except Exception as e:
-        print(f"Error occurred: {e}")
-        sys.exit(1)
-
-#if __name__ == "__main__":
-#    erase_and_program()
-
+        func(*args, **kwargs)  # Execute the function
+        return sys.stdout.getvalue()  # Get the output
+    finally:
+        sys.stdout = old_stdout  # Restore the original stdout
 
 
 # Logging Function
@@ -156,7 +112,8 @@ def log_message(log_box, message):
     """Log a message to the scrolling text box."""
     log_box.insert(tk.END, message + "\n")
     log_box.see(tk.END)
-    print(message)  # Optionally also log to the console
+    print(message)  
+
 
 # GUI Application
 def run_gui():
@@ -168,8 +125,18 @@ def run_gui():
             root.update()  # Force GUI update
 
             # Connect to the device
+            #log_message(log_box, "Connecting to the device...")
+            #do_connect(state, argparse.Namespace(device=["auto"]))
+
+
+            # Connect to the device
             log_message(log_box, "Connecting to the device...")
-            do_connect(state, argparse.Namespace(device=["auto"]))
+            output = capture_output(do_connect, state, argparse.Namespace(device=["auto"]))
+            log_message(log_box, output.strip())  # Add captured output to log_box
+     
+
+
+
             root.update()  # Force GUI update
 
             # Execute a script on the device
@@ -181,12 +148,7 @@ def run_gui():
             find_all(state)
             root.update()  # Force GUI update
 
-            # Upload files to the Pico
-            #log_message(log_box, "\nUploading files...")
-            #root.update()  # Force GUI update
-            #upload_to_pico(state, "PICO_CODE")
-
-
+          
             dir = "PICO_CODE"
             if os.path.exists(dir) and os.path.isdir(dir):
                 log_message(log_box, "\nUploading files...")
