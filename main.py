@@ -16,12 +16,13 @@ from mpremote.main import State
 #list files that should NOT be deleted here - must include directory name if file is in a sub directory
 exceptions = { "GameDefs/Game_Definition.json" }
 
+
 def delete_path(state,path):
     """Delete a file or directory."""
     try:
         cmd_args = argparse.Namespace(command=["rm"], path=[path], recursive=True, force=False, verbose=False)
         do_filesystem(state, cmd_args)
-        print(f"   Deleted: {path}")        
+        print(f"Del: {path}")        
     except Exception as e:
         print(f"   Error deleting {path}: {e}")
 
@@ -54,7 +55,7 @@ def find_all(state):
         items = list_files(state,current_path)  # file name. directories name ends in "/""
         for item in items:
             full_path = f"{current_path}{item}" if current_path else item
-            print("ITM: ",full_path)
+            #print("ITM: ",full_path)
             if full_path in exceptions:
                 print(f"Skipping: {full_path}")
             elif item.endswith("/"):  # Directory
@@ -114,60 +115,68 @@ def log_message(log_box, message):
     log_box.see(tk.END)
     print(message)  
 
+class LogBoxWriter:
+    def __init__(self, log_box, root):
+        self.log_box = log_box
+        self.root = root
+        self.encoding = "utf-8"  # Encoding for compatibility
+
+    def write(self, message):
+        """Write a message to the log box and update the GUI."""
+        if message.strip():  # Ignore empty messages
+            self.log_box.insert(tk.END, message + "\n")
+            self.log_box.see(tk.END)  # Auto-scroll
+            self.root.update()  # Force GUI update
+
+    def flush(self):
+        """Flush the writer (required for sys.stdout compatibility)."""
+        pass
+
+    def isatty(self):
+        """Return False to indicate this is not a TTY (required for sys.stdout compatibility)."""
+        return False
+
+
 
 # GUI Application
 def run_gui():
-    def run_erase_and_program():
-        """Run erase_and_program and redirect output to the log box."""
+    def run_erase_and_program():        
         try:
-            log_message(log_box, "Starting erase and program process...")
+            # Redirect sys.stdout to LogBoxWriter
+            original_stdout = sys.stdout
+            sys.stdout = LogBoxWriter(log_box, root)
+
+            print("Starting erase and program process...")
             state = State()
-            root.update()  # Force GUI update
 
             # Connect to the device
-            #log_message(log_box, "Connecting to the device...")
-            #do_connect(state, argparse.Namespace(device=["auto"]))
-
-
-            # Connect to the device
-            log_message(log_box, "Connecting to the device...")
-            output = capture_output(do_connect, state, argparse.Namespace(device=["auto"]))
-            log_message(log_box, output.strip())  # Add captured output to log_box
-     
-
-
-
-            root.update()  # Force GUI update
+            print("Connecting to the device...")
+            do_connect(state, argparse.Namespace(device=["auto"]))
 
             # Execute a script on the device
-            log_message(log_box, "Executing a script on the device...")
-            do_exec(state, argparse.Namespace(expr=["print('Hello from the custom app!')"], follow=True))
+            #print("Executing a script on the device...")
+            #do_exec(state, argparse.Namespace(expr=["print('Hello from the custom app!')"], follow=True))
 
             # Delete unnecessary files
-            log_message(log_box, "\nFinding and deleting unnecessary files...")
+            print("\nFinding and deleting unnecessary files...")
             find_all(state)
-            root.update()  # Force GUI update
 
-          
-            dir = "PICO_CODE"
-            if os.path.exists(dir) and os.path.isdir(dir):
-                log_message(log_box, "\nUploading files...")
-                root.update()  # Force GUI update
-                upload_to_pico(state, dir)
-            else:
-                log_message(log_box, f"\nError: Directory {dir} does not exist.")
-                root.update()  # Force GUI update
-
+            # Upload files to the Pico
+            print("\nUploading files...")
+            upload_to_pico(state, "PICO_CODE")
 
             # Disconnect from the device
-            log_message(log_box, "\nDisconnecting...")
+            print("\nDisconnecting...")
             do_disconnect(state)
 
-            log_message(log_box, "Finished.")
+            print("Finished.")
         except Exception as e:
-            log_message(log_box, f"Error occurred: {e}")
+            print(f"Error occurred: {e}")
         finally:
-            log_message(log_box, "Process complete.")
+            # Restore original stdout
+            sys.stdout = original_stdout
+            print("Process complete.")
+
 
     # Create the main window
     root = tk.Tk()
