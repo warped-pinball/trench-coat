@@ -1,0 +1,8 @@
+dist/
+*.pyc
+*.code-workspace
+*.exp
+*.sh
+*.toml
+PICO_CODE
+
