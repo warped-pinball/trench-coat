@@ -1,4 +1,3 @@
-dist/
 *.pyc
 *.code-workspace
 *.exp
