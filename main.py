@@ -3,6 +3,14 @@ Warped Pinball main - added to mpremote
 to make the pc re-programmer via USB
 
 for Vector, system 11, system 9 etc
+
+
+Build Windows EXE with this command:
+
+pyinstaller --onefile --add-data "PICO_CODE;PICO_CODE" --add-data "logo.png;." --icon=icon.ico --name "WarpedPinballProgrammer" main.py
+
+
+
 '''
 import tkinter as tk
 from tkinter import ttk, scrolledtext
@@ -137,6 +145,23 @@ class LogBoxWriter:
         return False
 
 
+def get_resource_path(filename):
+    """Get the path to a resource, accounting for PyInstaller's temporary extraction."""
+    if getattr(sys, 'frozen', False):  # Check if running as a PyInstaller executable
+        base_path = sys._MEIPASS  # Path where PyInstaller extracts files
+    else:
+        base_path = os.path.abspath(".")  # Normal path for running locally
+    return os.path.join(base_path, filename)
+
+
+def get_pico_code_path():
+    """Get the path to the PICO_CODE directory."""
+    if getattr(sys, 'frozen', False):  # If running as a bundled executable
+        base_path = sys._MEIPASS  # PyInstaller extracts files here
+    else:
+        base_path = os.path.abspath(".")  # Running in normal Python environment
+    return os.path.join(base_path, "PICO_CODE")
+
 
 # GUI Application
 def run_gui():
@@ -162,8 +187,15 @@ def run_gui():
             find_all(state)
 
             # Upload files to the Pico
-            print("\nUploading files...")
-            upload_to_pico(state, "PICO_CODE")
+            pico_code_path = get_pico_code_path()
+            if os.path.exists(pico_code_path):
+                print(f"PICO_CODE directory found at: {pico_code_path}")
+                upload_to_pico(state, pico_code_path)
+            else:
+                print("Error: PICO_CODE directory not found.")
+                                                
+            #print("\nUploading files...")
+            #upload_to_pico(state, "PICO_CODE")
 
             # Disconnect from the device
             print("\nDisconnecting...")
@@ -191,12 +223,14 @@ def run_gui():
     version_label.pack(pady=5)
 
     # Logo
-    logo_path = "logo.png"  # Replace with your logo file
+    logo_path = get_resource_path("logo.png")
     if os.path.exists(logo_path):
         logo_image = tk.PhotoImage(file=logo_path)
         logo_label = tk.Label(root, image=logo_image)
         logo_label.image = logo_image  # Keep a reference to avoid garbage collection
         logo_label.pack(pady=10)
+    else:
+        log_message(log_box, "Error: Logo file not found.")
 
     # Scrolling Text Box
     log_box = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=70, height=10, font=("Courier", 10))
