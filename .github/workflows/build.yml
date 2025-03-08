@@ -30,6 +30,7 @@ jobs:
             --hidden-import mpremote \
             --hidden-import mpremote.main \
             --hidden-import ipaddress \
+            --add-data "uf2:uf2" \
             trenchcoat.py
 
       - name: List dist folder
@@ -39,7 +40,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: TrenchCoat-linux
-          path: dist/TrenchCoat  # The single file on Linux
+          path: dist/TrenchCoat
+          if-no-files-found: error
 
   build_windows:
     name: Build on Windows
@@ -62,7 +64,7 @@ jobs:
         run: |
           if (Test-Path dist) { Remove-Item dist -Recurse -Force }
           if (Test-Path build) { Remove-Item build -Recurse -Force }
-          pyinstaller --onefile --name TrenchCoat --hidden-import mpremote --hidden-import mpremote.main --hidden-import ipaddress trenchcoat.py
+          pyinstaller --onefile --name TrenchCoat --hidden-import mpremote --hidden-import mpremote.main --hidden-import ipaddress --add-data "uf2;uf2" trenchcoat.py
       
 
       - name: List dist folder (Windows)
@@ -74,3 +76,4 @@ jobs:
         with:
           name: TrenchCoat-windows
           path: dist/TrenchCoat.exe
+          if-no-files-found: error
