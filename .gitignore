@@ -1,7 +1,1 @@
-*.pyc
-*.code-workspace
-*.exp
-*.sh
-*.toml
-PICO_CODE
-
+tc_test/**
