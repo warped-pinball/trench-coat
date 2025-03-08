@@ -14,7 +14,7 @@ jobs:
             matrix:
                 os: [ubuntu-latest, macos-latest, windows-latest]
                 include:
-                    - os: ubuntu-20.04
+                    - os: ubuntu-latest
                       platform: linux
                       artifact_extension: ""
                       venv_path: venv/lib/python3.10/site-packages
