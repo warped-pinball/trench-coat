@@ -17,6 +17,7 @@ import sys
 import os
 import io
 import argparse
+import mpremote
 from mpremote.commands import do_connect, do_exec, do_filesystem, do_disconnect
 from mpremote.main import State
 
