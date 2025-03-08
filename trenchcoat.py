@@ -6,6 +6,8 @@ import time
 import subprocess
 import serial.tools.list_ports
 
+import mpremote.main as _mp_main # ensure mpremote is bundled in build
+
 # Known USB vendor/product ID for the Pico (RP2040 MicroPython)
 PICO_VID = 0x2E8A
 PICO_PID = 0x0005
