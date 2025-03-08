@@ -10,7 +10,6 @@ Build Windows EXE with this command:
 pyinstaller --onefile --add-data "PICO_CODE;PICO_CODE" --add-data "logo.png;." --icon=icon.ico --name "WarpedPinballProgrammer" main.py
 
 
-
 '''
 import tkinter as tk
 from tkinter import ttk, scrolledtext
