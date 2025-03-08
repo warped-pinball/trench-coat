@@ -1,9 +1,9 @@
 name: Build and Deploy
 
 on:
-    pull_request:
+    push:
         branches:
-            - main
+            - '*'
 
 jobs:
     build:
@@ -52,5 +52,5 @@ jobs:
               uses: actions/upload-artifact@v4
               with:
                 name: WarpedPinballProgrammer${{ matrix.artifact_extension }}
-				
+
                 
