@@ -1,9 +1,9 @@
 name: Build and Package
 
 on:
-  push:
-    tags: ["v*.*"]    # e.g. push a 'v1.0' tag to trigger
-  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build:
