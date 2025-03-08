@@ -11,14 +11,18 @@ jobs:
         permissions:
             contents: write
         strategy:
+            fail-fast: false
             matrix:
                 os: [ubuntu-latest, macos-latest, windows-latest]
                 include:
                     - os: ubuntu-latest
+                      platform: linux
                       artifact_extension: ""
                     - os: macos-latest
+                      platform: mac
                       artifact_extension: ""
                     - os: windows-latest
+                      platform: win
                       artifact_extension: ".exe"
 
         steps:
@@ -37,21 +41,19 @@ jobs:
 
             - name: Build executable
               run: |
-                  pyinstaller --onefile --icon=icon.ico --name "WarpedPinballProgrammer" main.py
+                  pyinstaller --onefile --icon=icon.ico --name "WarpedPinballProgrammer-${{ matrix.platform }}" main.py
               shell: bash
 
             - name: Upload executable to GitHub Release
               uses: softprops/action-gh-release@v2
               if: ${{ github.event_name == 'release' }}
               with:
-                  files: dist/WarpedPinballProgrammer${{ matrix.artifact_extension }}
+                  files: dist/WarpedPinballProgrammer-${{ matrix.platform }}${{ matrix.artifact_extension }}
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Upload executable as artifact
               uses: actions/upload-artifact@v4
               with:
-                name: WarpedPinballProgrammer${{ matrix.artifact_extension }}
-                path: dist/WarpedPinballProgrammer${{ matrix.artifact_extension }}
-
-                
+                name: WarpedPinballProgrammer-${{ matrix.platform }}
+                path: dist/WarpedPinballProgrammer-${{ matrix.platform }}${{ matrix.artifact_extension }}
