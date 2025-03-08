@@ -17,12 +17,15 @@ jobs:
                     - os: ubuntu-latest
                       platform: linux
                       artifact_extension: ""
+                      venv_path: venv/lib/python3.10/site-packages
                     - os: macos-latest
                       platform: mac
                       artifact_extension: ""
+                      venv_path: venv/lib/python3.10/site-packages
                     - os: windows-latest
                       platform: win
                       artifact_extension: ".exe"
+                      venv_path: venv/Lib/site-packages
 
         steps:
             - name: Checkout code
@@ -33,14 +36,35 @@ jobs:
               with:
                   python-version: '3.10'
 
+            - name: Create virtual environment
+              run: python -m venv venv
+              shell: bash
+
             - name: Install dependencies
               run: |
+                  if [ "$RUNNER_OS" == "Windows" ]; then
+                    source venv/Scripts/activate
+                  else
+                    source venv/bin/activate
+                  fi
                   python -m pip install --upgrade pip
+                  if [ -f requirements.txt ]; then
+                    pip install -r requirements.txt
+                  else
+                    echo "requirements.txt not found, creating one"
+                    pip freeze > requirements.txt
+                  fi
                   pip install pyinstaller
+              shell: bash
 
             - name: Build executable
               run: |
-                  pyinstaller --onefile --icon=icon.ico --name "WarpedPinballProgrammer-${{ matrix.platform }}" main.py
+                  if [ "$RUNNER_OS" == "Windows" ]; then
+                    source venv/Scripts/activate
+                  else
+                    source venv/bin/activate
+                  fi
+                  pyinstaller --onefile --icon=icon.ico --paths ${{ matrix.venv_path }} --name "WarpedPinballProgrammer-${{ matrix.platform }}" main.py
               shell: bash
 
             - name: Upload executable to GitHub Release
