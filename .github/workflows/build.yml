@@ -38,7 +38,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pico-flasher-linux
+          name: TrenchCoat-linux
           path: dist/TrenchCoat  # The single file on Linux
 
   build_windows:
@@ -57,17 +57,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      
       - name: Build with PyInstaller (Windows)
-        shell: pwsh  # Using PowerShell
         run: |
-          if (Test-Path dist) {Remove-Item dist -Recurse -Force}
-          if (Test-Path build) {Remove-Item build -Recurse -Force}
-          pyinstaller --onefile ^
-            --name TrenchCoat ^
-            --hidden-import mpremote ^
-            --hidden-import mpremote.main ^
-            --hidden-import ipaddress ^
-            trenchcoat.py
+          if (Test-Path dist) { Remove-Item dist -Recurse -Force }
+          if (Test-Path build) { Remove-Item build -Recurse -Force }
+          pyinstaller --onefile --name TrenchCoat --hidden-import mpremote --hidden-import mpremote.main --hidden-import ipaddress trenchcoat.py
+      
 
       - name: List dist folder (Windows)
         shell: pwsh
@@ -76,5 +72,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pico-flasher-windows
+          name: TrenchCoat-windows
           path: dist/TrenchCoat.exe
