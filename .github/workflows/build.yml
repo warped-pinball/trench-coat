@@ -37,7 +37,7 @@ jobs:
 
             - name: Build executable
               run: |
-                  pyinstaller --onefile --add-data "PICO_CODE;PICO_CODE" --add-data "logo.png;." --icon=icon.ico --name "WarpedPinballProgrammer" main.py
+                  pyinstaller --onefile --icon=icon.ico --name "WarpedPinballProgrammer" main.py
               shell: bash
 
             - name: Upload executable to GitHub Release
@@ -52,5 +52,6 @@ jobs:
               uses: actions/upload-artifact@v4
               with:
                 name: WarpedPinballProgrammer${{ matrix.artifact_extension }}
+                path: dist/WarpedPinballProgrammer${{ matrix.artifact_extension }}
 
                 
