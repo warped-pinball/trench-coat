@@ -34,10 +34,10 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --name pico-flasher${{ matrix.ext }} flash.py
+          pyinstaller trenchcoat.spec
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: dist/pico-flasher${{ matrix.ext }}*
+          path: dist/Trenchcoat${{ matrix.ext }}*
