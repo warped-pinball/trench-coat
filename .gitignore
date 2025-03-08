@@ -1,1 +1,5 @@
 tc_test/**
+**.spec
+
+build/**
+dist/**
