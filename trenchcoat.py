@@ -6,9 +6,6 @@ import time
 import subprocess
 import serial.tools.list_ports
 
-# imports to make pyinstaller include these modules
-import mpremote.main as _mp_main
-import ipaddress
 
 
 # Known USB vendor/product ID for the Pico (RP2040 MicroPython)

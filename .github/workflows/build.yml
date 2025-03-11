@@ -25,8 +25,6 @@ jobs:
           pyinstaller --onefile \
             --name TrenchCoat \
             --hidden-import mpremote \
-            --hidden-import mpremote.main \
-            --hidden-import ipaddress \
             --add-data "uf2:uf2" \
             trenchcoat.py
 
@@ -57,7 +55,7 @@ jobs:
           pip install -r requirements.txt
           if (Test-Path dist) { Remove-Item dist -Recurse -Force }
           if (Test-Path build) { Remove-Item build -Recurse -Force }
-          pyinstaller --onefile --name TrenchCoat --hidden-import mpremote --hidden-import mpremote.main --hidden-import ipaddress --add-data "uf2;uf2" trenchcoat.py
+          pyinstaller --onefile --name TrenchCoat --hidden-import mpremote --add-data "uf2;uf2" trenchcoat.py
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
