@@ -23,18 +23,38 @@ def main():
     firmware_path = select_uf2()
 
     # Step 2: Device detection
-    ports = pick_pico_ports()
-            
-    for port in ports:
-        # Step 3: Enter bootloader mode
+    ports, bootloader_ports = find_pico_ports_separated()
+    
+    all_ports = [f"{p.device} ({p.manufacturer}) - Normal Mode" for p in ports] + \
+                [f"{p} - Bootloader Mode" for p in bootloader_ports]
+    
+    if not all_ports:
+        print("No Warped Pinball devices found. Please plug in via USB and try again.")
+        sys.exit(0)
+    
+    print("\nUse SPACE to select multiple devices, then press ENTER to confirm.")
+    selections = inquirer.checkbox(
+        message="Confirm the device(s) to flash:",
+        choices=all_ports
+    ).execute()
+    
+    print(f"You selected: {selections}")
+    if "Exit" in selections or not selections:
+        print("Exiting...\n")
+        sys.exit(0)
+    
+    normal_ports = [p.device for p in ports if f"{p.device} ({p.manufacturer}) - Normal Mode" in selections]
+    bootloader_ports = [p.replace(" - Bootloader Mode", "") for p in bootloader_ports if p + " - Bootloader Mode" in selections]
+    
+    for port in normal_ports:
         if enter_bootloader(port):
             print(f"Successfully entered bootloader mode on {port}")
-            time.sleep(10) # Wait for the device to show up as a drive
+            bootloader_ports.append(port)
         else:
             print(f"Failed to enter bootloader mode on {port}")
             exit(1)
     
-        # Step 4: Flash the firmware
+    for port in bootloader_ports:
         copy_uf2_to_bootloader(firmware_path)
 
     print("All done. Exiting.")
@@ -61,52 +81,35 @@ def select_uf2():
         default=0
     ).execute()
     
+    print(f"You selected: {menu_entry}")
     if menu_entry == "Exit":
+        print("Exiting...\n")
         sys.exit(0)
     elif menu_entry == "Custom":
         path = inquirer.text("Enter the full path to a custom UF2 file:").execute()
+        print(f"You entered: {path}")
         if not os.path.isfile(path):
             print("Invalid file path. Exiting.")
             sys.exit(1)
-        print(f"Selected firmware: {path}")
         return path
     
-    print(f"Selected firmware: {menu_entry}")
     return uf2_file_paths[uf2_files.index(menu_entry)]
-    
-
-def pick_pico_ports():
-    """Interactive function to select a Pico port"""
-    ports = find_pico_ports()
-    if not ports:
-        print("No available Warped Pinball devices found. Please plug in via USB and try again.")
-        sys.exit(0)
-    
-    port_names = [f"{p.device} ({p.manufacturer})" for p in ports]
-    port_names.append("Exit")
-    
-    selections = inquirer.checkbox(
-        message="Confirm the device to flash:",
-        choices=port_names
-    ).execute()
-
-    if "Exit" in selections or not selections:
-        sys.exit(0)
-    
-    return [ports[port_names.index(sel)].device for sel in selections]
 
 #######################
 # OPERATIONAL LOGIC   #
 #######################
 
-def find_pico_ports():
-    """Find available Pico ports (non-interactive)"""
+def find_pico_ports_separated():
+    """Find available Pico ports and separate normal from bootloader mode"""
     pico_ports = []
+    bootloader_ports = list_rpi_rp2_drives()
+    
     for port in serial.tools.list_ports.comports():
         if port.vid is not None and port.pid is not None:
             if (port.vid == PICO_VID) and (port.pid == PICO_PID):
                 pico_ports.append(port)
-    return pico_ports
+    
+    return pico_ports, bootloader_ports
 
 def enter_bootloader(port):
     """Use mpremote to enter bootloader mode"""
@@ -114,6 +117,7 @@ def enter_bootloader(port):
         ["mpremote", "connect", port, "bootloader"],
         capture_output=True, text=True
     )
+    time.sleep(3)  # Allow enough time for the board to reconnect in bootloader mode
     return result.returncode == 0
 
 def copy_uf2_to_bootloader(firmware_path):
