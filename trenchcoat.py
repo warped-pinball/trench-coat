@@ -5,8 +5,8 @@ import os
 import time
 import subprocess
 import serial.tools.list_ports
-from simple_term_menu import TerminalMenu
 import shutil
+from InquirerPy import inquirer
 
 # Known USB vendor/product ID for the Pico (RP2040 MicroPython)
 PICO_VID = 0x2E8A
@@ -39,7 +39,6 @@ def main():
     print("All done. Exiting.")
     sys.exit(0)
 
-
 #######################
 # USER INTERFACE      #
 #######################
@@ -55,48 +54,50 @@ def select_uf2():
     uf2_files.append("Custom")
     uf2_files.append("Exit")
     
-    menu = TerminalMenu(uf2_files, title="Select a firmware file to flash:")
-    menu_entry_index = menu.show()
+    menu_entry = inquirer.select(
+        message="Select a firmware file to flash:",
+        choices=uf2_files,
+        default=0
+    ).execute()
     
-    if uf2_files[menu_entry_index] == "Exit":
+    if menu_entry == "Exit":
         sys.exit(0)
-    elif uf2_files[menu_entry_index] == "Custom":
-        print("Enter the full path to a custom UF2 file:")
-        path = input().strip()
+    elif menu_entry == "Custom":
+        path = inquirer.text("Enter the full path to a custom UF2 file:").execute()
         if not os.path.isfile(path):
             print("Invalid file path. Exiting.")
             sys.exit(1)
         print(f"Selected firmware: {path}")
         return path
     
-    print(f"Selected firmware: {uf2_files[menu_entry_index]}")
-    return uf2_file_paths[menu_entry_index]
+    print(f"Selected firmware: {menu_entry}")
+    return uf2_file_paths[uf2_files.index(menu_entry)]
     
 
 def pick_pico_ports():
     """Interactive function to select a Pico port"""
     ports = find_pico_ports()
     if not ports:
-        print("No available Warped Pinball devices found. Checking if any are in bootloader mode...")
-        
-        print("No Warped Pinball devices found. Please plug in via USB and try again.")
+        print("No available Warped Pinball devices found. Please plug in via USB and try again.")
         sys.exit(0)
     
-    # ask the user to pick a port
     port_names = [f"{p.device} ({p.manufacturer})" for p in ports]
     port_names.append("Exit")
-    menu = TerminalMenu(port_names, title="Confirm the device to flash:", multi_select=True)
-    selections = menu.show()
+    
+    selections = inquirer.checkbox(
+        message="Confirm the device to flash:",
+        choices=port_names
+    ).execute()
 
-    if "Exit" in menu.chosen_menu_entries or not selections:
+    if "Exit" in selections or not selections:
         sys.exit(0)
     
-    # return the selected port(s)
-    return [ports[i].device for i in selections]
+    return [ports[port_names.index(sel)].device for sel in selections]
 
 #######################
 # OPERATIONAL LOGIC   #
 #######################
+
 def find_pico_ports():
     """Find available Pico ports (non-interactive)"""
     pico_ports = []
@@ -117,14 +118,13 @@ def enter_bootloader(port):
 def copy_uf2_to_bootloader(firmware_path):
     """Copy the UF2 file to the bootloader drive"""
     pico_drive = None
-
-    # Try to auto-detect the RPI-RP2 drive
+    
     drives = list_rpi_rp2_drives()
-
+    
     if len(drives) == 0:
         print("No Warped Pinball devices found. Please plug in via USB and try again.")
         sys.exit(0)
-
+    
     for i, drive in enumerate(drives):
         print(f"Flashing board {i+1} of {len(drives)}")
         shutil.copy(firmware_path, drive)
@@ -136,10 +136,8 @@ def copy_uf2_to_bootloader(firmware_path):
 def resource_path(relative_path: str) -> str:
     """Returns the absolute path to a resource that may be bundled by PyInstaller."""
     if hasattr(sys, "_MEIPASS"):
-        # Running in PyInstaller one-file bundle
         return os.path.join(sys._MEIPASS, relative_path)
     else:
-        # Running directly from source
         return os.path.join(os.path.dirname(__file__), relative_path)
 
 def list_bundled_uf2():
@@ -147,8 +145,7 @@ def list_bundled_uf2():
     uf2_dir = resource_path("uf2")
     if not os.path.isdir(uf2_dir):
         return []
-    files = [f for f in os.listdir(uf2_dir) if f.lower().endswith(".uf2")]
-    return [os.path.join(uf2_dir, f) for f in files]
+    return [os.path.join(uf2_dir, f) for f in os.listdir(uf2_dir) if f.lower().endswith(".uf2")]
 
 def list_rpi_rp2_drives():
     """List all RPI-RP2 drives on Windows, Linux, or macOS"""
@@ -178,7 +175,6 @@ def list_rpi_rp2_drives_linux_macos():
             if "INFO_UF2.TXT" in files:
                 found_drives.append(root)
     return found_drives
-
 
 if __name__ == "__main__":
     main()

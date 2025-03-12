@@ -2,3 +2,4 @@ mpremote==1.24.1
 pyserial==3.5
 pyinstaller==6.12
 simple-term-menu==1.6.6
+InquirerPy==0.3.3
