@@ -29,6 +29,7 @@ def main():
         # Step 3: Enter bootloader mode
         if enter_bootloader(port):
             print(f"Successfully entered bootloader mode on {port}")
+            time.sleep(10) # Wait for the device to show up as a drive
         else:
             print(f"Failed to enter bootloader mode on {port}")
             exit(1)
@@ -150,7 +151,6 @@ def list_bundled_uf2():
 def list_rpi_rp2_drives():
     """List all RPI-RP2 drives on Windows, Linux, or macOS"""
     if os.name == 'nt':
-        time.sleep(2)  # wait for the drive(s) to appear
         return list_rpi_rp2_drives_windows()
     else:
         return list_rpi_rp2_drives_linux_macos()
