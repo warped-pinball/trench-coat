@@ -3,7 +3,7 @@ import shutil
 import sys
 import time
 
-import ray  # Import the ray module with direct serial functions
+import src.ray as ray  # Import the ray module with direct serial functions
 
 # Known USB vendor/product ID for the Pico (RP2040 MicroPython)
 PICO_VID = 0x2E8A
