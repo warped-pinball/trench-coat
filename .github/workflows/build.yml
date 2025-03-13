@@ -26,7 +26,7 @@ jobs:
             --name TrenchCoat \
             --hidden-import mpremote \
             --add-data "uf2:uf2" \
-            trenchcoat.py
+            src/main.py
 
       - name: List dist folder
         run: ls -la dist
@@ -55,7 +55,7 @@ jobs:
           pip install -r requirements.txt
           if (Test-Path dist) { Remove-Item dist -Recurse -Force }
           if (Test-Path build) { Remove-Item build -Recurse -Force }
-          pyinstaller --onefile --name TrenchCoat --hidden-import mpremote --add-data "uf2;uf2" trenchcoat.py
+          pyinstaller --onefile --name TrenchCoat --hidden-import mpremote --add-data "uf2;uf2" src/main.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
