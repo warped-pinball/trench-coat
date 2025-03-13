@@ -3,14 +3,14 @@
 import sys
 import os
 import time
-import subprocess
-import serial.tools.list_ports
 import shutil
 from InquirerPy import inquirer
+import ray  # Import the ray module with direct serial functions
 
 # Known USB vendor/product ID for the Pico (RP2040 MicroPython)
 PICO_VID = 0x2E8A
 PICO_PID = 0x0005
+BAUD_RATE = 115200  # Standard baud rate for MicroPython REPL
 
 #######################
 # MAIN PROGRAM FLOW   #
@@ -25,7 +25,7 @@ def main():
     # Step 2: Device detection
     ports, bootloader_ports = find_pico_ports_separated()
     
-    all_ports = [f"{p.device} ({p.manufacturer}) - Normal Mode" for p in ports] + \
+    all_ports = [f"{p} - Normal Mode" for p in ports] + \
                 [f"{p} - Bootloader Mode" for p in bootloader_ports]
     
     if not all_ports:
@@ -39,12 +39,12 @@ def main():
     ).execute()
     
     print(f"You selected: {selections}")
-    if "Exit" in selections or not selections:
+    if not selections:
         print("Exiting...\n")
         sys.exit(0)
     
-    normal_ports = [p.device for p in ports if f"{p.device} ({p.manufacturer}) - Normal Mode" in selections]
-    bootloader_ports = [p.replace(" - Bootloader Mode", "") for p in bootloader_ports if p + " - Bootloader Mode" in selections]
+    normal_ports = [p.replace(" - Normal Mode", "") for p in selections if "Normal Mode" in p]
+    bootloader_ports = [p.replace(" - Bootloader Mode", "") for p in selections if "Bootloader Mode" in p]
     
     for port in normal_ports:
         if enter_bootloader(port):
@@ -54,8 +54,18 @@ def main():
             print(f"Failed to enter bootloader mode on {port}")
             exit(1)
     
-    for port in bootloader_ports:
-        copy_uf2_to_bootloader(firmware_path)
+    # Brief delay to allow bootloaders to fully initialize
+    time.sleep(3)
+    
+    # Find bootloader drives after entering bootloader mode
+    bootloader_drives = list_rpi_rp2_drives()
+    if not bootloader_drives:
+        print("No bootloader drives found after putting devices in bootloader mode.")
+        sys.exit(1)
+        
+    print(f"Found {len(bootloader_drives)} bootloader drive(s)")
+    for drive in bootloader_drives:
+        copy_uf2_to_bootloader(firmware_path, drive)
 
     print("All done. Exiting.")
     sys.exit(0)
@@ -101,33 +111,41 @@ def select_uf2():
 
 def find_pico_ports_separated():
     """Find available Pico ports and separate normal from bootloader mode"""
-    pico_ports = []
+    # Use ray.py to find Pico boards in normal mode
+    pico_ports = ray.find_boards(PICO_VID, PICO_PID)
     bootloader_ports = list_rpi_rp2_drives()
-    
-    for port in serial.tools.list_ports.comports():
-        if port.vid is not None and port.pid is not None:
-            if (port.vid == PICO_VID) and (port.pid == PICO_PID):
-                pico_ports.append(port)
     
     return pico_ports, bootloader_ports
 
 def enter_bootloader(port):
-    """Use mpremote to enter bootloader mode"""
-    result = subprocess.run(
-        ["mpremote", "connect", port, "bootloader"],
-        capture_output=True, text=True
-    )
-    time.sleep(3)  # Allow enough time for the board to reconnect in bootloader mode
-    return result.returncode == 0
+    """Use ray.py to enter bootloader mode"""
+    try:
+        # Use the specialized bootloader function from ray
+        print(f"Sending bootloader command to {port}...")
+        result = ray.enter_bootloader_mode(port, BAUD_RATE)
+        
+        if result:
+            # Allow time for the board to restart in bootloader mode
+            print("Waiting for device to enter bootloader mode...")
+            time.sleep(3)  # Longer wait time for more reliability
+            return True
+        else:
+            return False
+    except Exception as e:
+        print(f"Error entering bootloader mode: {e}")
+        return False
 
-def copy_uf2_to_bootloader(firmware_path):
+def copy_uf2_to_bootloader(firmware_path, drive=None):
     """Copy the UF2 file to the bootloader drive"""
-    pico_drive = None
+    if drive:
+        print(f"Flashing UF2 to {drive}")
+        shutil.copy(firmware_path, drive)
+        return
     
     drives = list_rpi_rp2_drives()
     
     if len(drives) == 0:
-        print("No Warped Pinball devices found. Please plug in via USB and try again.")
+        print("No Warped Pinball devices found in bootloader mode. Please put the device in bootloader mode and try again.")
         sys.exit(0)
     
     for i, drive in enumerate(drives):
