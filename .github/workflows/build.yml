@@ -56,7 +56,7 @@ jobs:
           if (Test-Path dist) { Remove-Item dist -Recurse -Force }
           if (Test-Path build) { Remove-Item build -Recurse -Force }
           pyinstaller --onefile --name TrenchCoat --hidden-import mpremote --add-data "uf2;uf2" trenchcoat.py
-      
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
