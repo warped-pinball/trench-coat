@@ -89,11 +89,7 @@ def send_command(port: str, baud: int, command: str, timeout: float = 1) -> str:
         return None
 
 
-def enter_bootloader_mode(port: str, baud: int = 115200) -> bool:
-    """
-    Put a MicroPython board into bootloader mode.
-    Returns True if the command was sent successfully.
-    """
+def enter_bootloader_mode(port: str, baud: int = 115200):
     try:
         # Open serial connection
         with serial.Serial(port, baud, timeout=1) as ser:
@@ -107,12 +103,5 @@ def enter_bootloader_mode(port: str, baud: int = 115200) -> bool:
             # Send the machine.bootloader() command
             command = "import machine; machine.bootloader()\r\n"
             ser.write(command.encode("utf-8"))
-
-            # The device will disconnect immediately, so we can't expect a response
-            # Just a short delay to ensure the command is sent
-            time.sleep(0.5)
-
-            return True
     except Exception as e:
-        print(f"Error entering bootloader mode: {e}")
-        return False
+        raise Exception(f"Failed to enter bootloader mode: {e}")

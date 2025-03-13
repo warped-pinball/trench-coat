@@ -1,18 +1,18 @@
-import sys
-
-from src.cli import cmd_mode, parse_args
-from src.interactive import interactive_mode
+from src.core import flash_firmware
+from src.interactive import display_welcome, select_devices, select_uf2
 
 
 def main():
-    args = parse_args()
+    display_welcome()
 
-    # If no arguments provided or interactive mode explicitly requested, run in interactive mode
-    if len(sys.argv) == 1 or args.interactive:
-        interactive_mode()
-    else:
-        # Process command line arguments
-        cmd_mode(args)
+    # Step 1: Firmware selection
+    firmware_path = select_uf2()
+
+    # Step 2: Device detection and selection
+    ports = select_devices()
+
+    # Step 3: Flash the firmware
+    flash_firmware(firmware_path, ports)
 
 
 if __name__ == "__main__":

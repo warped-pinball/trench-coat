@@ -11,70 +11,32 @@ PICO_PID = 0x0005
 BAUD_RATE = 115200  # Standard baud rate for MicroPython REPL
 
 
-def flash_firmware(firmware_path, normal_ports=None, bootloader_ports=None):
+def flash_firmware(firmware_path, ports=None):
     """Core function to flash firmware to devices"""
-    normal_ports = normal_ports or []
-    bootloader_ports = bootloader_ports or []
+    ports = ports or []
 
     # Enter bootloader mode for normal ports
-    for port in normal_ports:
-        if enter_bootloader(port):
-            print(f"Successfully entered bootloader mode on {port}")
-            bootloader_ports.append(port)
-        else:
-            print(f"Failed to enter bootloader mode on {port}")
-            return False
+    for port in ports:
+        print(f"Putting {port} into bootloader mode...")
+        ray.enter_bootloader_mode(port, BAUD_RATE)
 
-    # Brief delay to allow bootloaders to fully initialize
-    if normal_ports:
-        print("Waiting for bootloader devices to initialize...")
-        time.sleep(3)
+    # Setup a timeout to wait for bootloader drives to appear
+    max_wait_time = 20  # Maximum wait time in seconds
+    start_time = time.time()
+    bootloader_drives = []
 
-    # Find bootloader drives
-    bootloader_drives = list_rpi_rp2_drives()
+    while len(bootloader_drives) < len(ports):
+        if (time.time() - start_time) > max_wait_time:
+            raise TimeoutError("Timeout waiting for devices to appear in bootloader mode.")
+        time.sleep(1)
+        bootloader_drives = list_rpi_rp2_drives()
+
     if not bootloader_drives:
-        print("No bootloader drives found after putting devices in bootloader mode.")
-        return False
+        raise RuntimeError("No devices found in bootloader mode. Please try again.")
 
-    print(f"Found {len(bootloader_drives)} bootloader drive(s)")
     for drive in bootloader_drives:
+        print(f"Flashing {firmware_path} to {drive}")
         copy_uf2_to_bootloader(firmware_path, drive)
-
-    print("All done. Flashing complete.")
-    return True
-
-
-#######################
-# OPERATIONAL LOGIC   #
-#######################
-
-
-def find_pico_ports_separated():
-    """Find available Pico ports and separate normal from bootloader mode"""
-    # Use ray.py to find Pico boards in normal mode
-    pico_ports = ray.find_boards(PICO_VID, PICO_PID)
-    bootloader_ports = list_rpi_rp2_drives()
-
-    return pico_ports, bootloader_ports
-
-
-def enter_bootloader(port):
-    """Use ray.py to enter bootloader mode"""
-    try:
-        # Use the specialized bootloader function from ray
-        print(f"Sending bootloader command to {port}...")
-        result = ray.enter_bootloader_mode(port, BAUD_RATE)
-
-        if result:
-            # Allow time for the board to restart in bootloader mode
-            print("Waiting for device to enter bootloader mode...")
-            time.sleep(3)  # Longer wait time for more reliability
-            return True
-        else:
-            return False
-    except Exception as e:
-        print(f"Error entering bootloader mode: {e}")
-        return False
 
 
 def copy_uf2_to_bootloader(firmware_path, drive=None):
@@ -93,11 +55,6 @@ def copy_uf2_to_bootloader(firmware_path, drive=None):
     for i, drive in enumerate(drives):
         print(f"Flashing board {i+1} of {len(drives)}")
         shutil.copy(firmware_path, drive)
-
-
-#######################
-# UTILITY FUNCTIONS   #
-#######################
 
 
 def resource_path(relative_path: str) -> str:
