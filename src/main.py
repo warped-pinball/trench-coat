@@ -9,16 +9,19 @@ def main():
     ports = select_devices()
 
     # Step 2: Firmware selection
-    firmware_path = select_uf2()
+    firmware = select_uf2()
 
-    # Step 3: Flash the firmware
-    flash_firmware(firmware_path, ports)
+    # Step 3: Select the software to flash
+    software = select_software()
 
-    # Step 4: Select the software to flash
-    tag_name = select_software()
+    for port in ports:
+        # Step 4: Flash the firmware
+        if firmware:
+            flash_firmware(firmware, port)
 
-    # Step 5: Flash the software
-    flash_software(tag_name, ports)
+        # Step 5: Flash the software
+        if software:
+            flash_software(software, port)
 
 
 if __name__ == "__main__":
