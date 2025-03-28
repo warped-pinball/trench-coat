@@ -61,6 +61,11 @@ def select_devices():
             print("No devices selected. Please select at least one device.")
         elif "Exit" in selections:
             sys.exit(0)
+
+    # make sure we return a list of ports
+    if isinstance(selections, str):
+        selections = [selections]
+
     return selections
 
 
