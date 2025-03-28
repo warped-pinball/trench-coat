@@ -11,6 +11,15 @@ PICO_PID = 0x0005
 BAUD_RATE = 115200  # Standard baud rate for MicroPython REPL
 
 
+def flash_software(tag_name, ports=None):
+    pass
+    # download update file
+
+    # validate with public key
+
+    # flash to all devices
+
+
 def flash_firmware(firmware_path, ports=None):
     """Core function to flash firmware to devices"""
     ports = ports or []

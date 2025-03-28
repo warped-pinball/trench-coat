@@ -1,6 +1,8 @@
 import os
 import sys
+from datetime import datetime
 
+import requests
 from InquirerPy import inquirer
 
 from src.core import list_bundled_uf2
@@ -21,7 +23,6 @@ def select_uf2():
 
     menu_entry = inquirer.select(message="Select a firmware file to flash:", choices=uf2_files, default=0).execute()
 
-    print(f"You selected: {menu_entry}")
     if menu_entry == "Exit":
         print("Exiting...\n")
         sys.exit(0)
@@ -60,3 +61,67 @@ def select_devices():
         elif "Exit" in selections:
             sys.exit(0)
     return selections
+
+
+def select_software():
+    # get list of all releases from github
+    url = "https://api.github.com/repos/warped-pinball/vector/releases"
+    response = requests.get(url)
+    response.raise_for_status()
+    releases = response.json()
+
+    if not releases:
+        print("No releases found in the repository.")
+        sys.exit(1)
+
+    # Filter out releases with suffixes like "-dev" or "-beta"
+    filtered_releases = []
+    for release in releases:
+        tag = release["tag_name"].lstrip("v")
+        if "-" not in tag:
+            filtered_releases.append(release)
+
+    if not filtered_releases:
+        print("No stable releases found in the repository.")
+        sys.exit(1)
+
+    # Sort releases by semantic version (latest first)
+    def parse_version(tag_name):
+        # Remove 'v' prefix if present
+        tag_name = tag_name.lstrip("v")
+        # Parse version components
+        try:
+            parts = [int(x) for x in tag_name.split(".")]
+            # Pad with zeros for consistent comparison
+            while len(parts) < 3:
+                parts.append(0)
+            return tuple(parts)
+        except (ValueError, TypeError):
+            # Return a minimal version for non-standard formats
+            return (0, 0, 0)
+
+    filtered_releases.sort(key=lambda r: parse_version(r["tag_name"]), reverse=True)
+
+    # Format dates and prepare choices
+    choices = []
+    release_map = {}  # Map formatted choice to original release
+
+    for release in filtered_releases:
+        name = release["name"] or release["tag_name"]
+        published_date = datetime.strptime(release["published_at"], "%Y-%m-%dT%H:%M:%SZ")
+        formatted_date = published_date.strftime("%Y-%m-%d")
+        choice_text = f"{name} ({formatted_date})"
+        choices.append(choice_text)
+        release_map[choice_text] = release
+
+    choices.append("Exit")
+
+    selected_choice = inquirer.select(message="Select a software release:", choices=choices).execute()
+
+    if selected_choice == "Exit":
+        print("Exiting...\n")
+        sys.exit(0)
+
+    # Get the selected release data
+    selected_release = release_map[selected_choice]
+    return selected_release["tag_name"]
