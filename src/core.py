@@ -11,7 +11,7 @@ PICO_PID = 0x0005
 BAUD_RATE = 115200  # Standard baud rate for MicroPython REPL
 
 
-def flash_software(software, ports=None):
+def flash_software(software, port):
     with open(software, "rb") as f:
         # print the first line
         first_line = f.readline().decode("utf-8").strip()
@@ -23,28 +23,21 @@ def flash_software(software, ports=None):
     # flash to all devices
 
 
-def flash_firmware(firmware_path, ports=None):
+def flash_firmware(firmware_path, port):
     """Core function to flash firmware to devices"""
-    ports = ports or []
-
     # Enter bootloader mode for normal ports
-    for port in ports:
-        print(f"Putting {port} into bootloader mode...")
-        ray.enter_bootloader_mode(port, BAUD_RATE)
+    print(f"Putting {port} into bootloader mode...")
+    ray.enter_bootloader_mode(port, BAUD_RATE)
 
     # Setup a timeout to wait for bootloader drives to appear
-    max_wait_time = 20  # Maximum wait time in seconds
     start_time = time.time()
     bootloader_drives = []
 
-    while len(bootloader_drives) < len(ports):
-        if (time.time() - start_time) > max_wait_time:
+    while len(bootloader_drives) == 0:
+        if (time.time() - start_time) > 20:
             raise TimeoutError("Timeout waiting for devices to appear in bootloader mode.")
         time.sleep(1)
         bootloader_drives = list_rpi_rp2_drives()
-
-    if not bootloader_drives:
-        raise RuntimeError("No devices found in bootloader mode. Please try again.")
 
     for drive in bootloader_drives:
         print(f"Flashing {firmware_path} to {drive}")
