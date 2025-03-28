@@ -3,26 +3,17 @@ import shutil
 import sys
 import time
 
-import src.ray as ray  # Import the ray module with direct serial functions
+import src.ray as ray
 
 # Known USB vendor/product ID for the Pico (RP2040 MicroPython)
 PICO_VID = 0x2E8A
 PICO_PID = 0x0005
-BAUD_RATE = 115200  # Standard baud rate for MicroPython REPL
+BAUD_RATE = 115200
 
 
-def flash_software(software, port):
-    with open(software, "rb") as f:
-        # print the first line
-        first_line = f.readline().decode("utf-8").strip()
-        print(f"First line of {software}: {first_line}")
-    # download update file
-
-    # validate with public key
-
-    # flash to all devices
-
-
+#
+# Firmware flashing functions
+#
 def flash_firmware(firmware_path, port):
     """Core function to flash firmware to devices"""
     # Enter bootloader mode for normal ports
@@ -108,3 +99,13 @@ def list_rpi_rp2_drives_linux_macos():
             if "INFO_UF2.TXT" in files:
                 found_drives.append(root)
     return found_drives
+
+
+#
+# Software flashing functions
+#
+
+
+def flash_software(software, port):
+    print(f"Flashing {software} to {port}")
+    # flash to all devices

@@ -1,9 +1,13 @@
+import hashlib
+import json
 import os
 import sys
 import tempfile
+from binascii import a2b_base64, unhexlify
 from datetime import datetime
 
 import requests
+import rsa
 from InquirerPy import inquirer
 
 from src.core import list_bundled_uf2
@@ -70,6 +74,8 @@ def select_devices():
 
 
 def select_software():
+    # TODO allow for custom update.json files
+
     # get list of all releases from github
     url = "https://api.github.com/repos/warped-pinball/vector/releases"
     response = requests.get(url)
@@ -148,5 +154,63 @@ def select_software():
     with open(temp_file.name, "wb") as f:
         f.write(response.content)
 
-    print(f"Downloaded update file for {selected_release['tag_name']}")
-    return temp_file.name
+    if validate_update_file(temp_file.name):
+        print(f"Downloaded update file for {selected_release['tag_name']}")
+        return temp_file.name
+    else:
+        print("Downloaded update file is invalid. Exiting.")
+        os.remove(temp_file.name)
+        sys.exit(1)
+
+
+def read_last_significant_line(filepath):
+    with open(filepath, "rb") as f:
+        # Read lines in reverse order
+        for line in reversed(f.readlines()):
+            line = line.strip()
+            if line:
+                return line
+    raise ValueError("No significant line found in the file.")
+
+
+def validate_update_file(filepath) -> bool:
+    # Step 1: Read the last line and calculate hash of content
+    last_line_bytes = read_last_significant_line(filepath)
+
+    # Calculate content length (file size minus last line and newline)
+    with open(filepath, "rb") as f:
+        f.seek(0, 2)  # Go to end
+        file_size = f.tell()
+
+    content_end = file_size - (len(last_line_bytes) + 1)  # -1 for newline
+
+    # Step 2: Calculate hash of content (excluding signature line)
+    with open(filepath, "r") as f:
+        content = f.read(content_end).strip()  # Read file up to the signature line
+
+    calculated_hash = hashlib.sha256(content.encode("utf-8")).digest()
+    # Step 3: Parse signature metadata
+    sig_data = json.loads(last_line_bytes.decode("utf-8"))
+    expected_hash = unhexlify(sig_data.get("sha256", ""))
+    signature = a2b_base64(sig_data.get("signature", ""))
+
+    # Step 4: Verify hash integrity
+    if calculated_hash != expected_hash:
+        print("Hash mismatch! File may be corrupted.")
+        print(f"Expected:   {expected_hash.hex()}")
+        print(f"Calculated: {calculated_hash.hex()}")
+
+        return False
+
+    # Step 5: Verify signature
+    try:
+        public_key = rsa.PublicKey(
+            n=25850530073502007505073398889935110756716032251132404339199218781380059422255360862345198138544675141546256513054332184373517438166092251410172963421556299077069195099284810366900994760048877561951388981897823462231871242380041390062269561386306787290618184745309059687916294069920586099425145107624115989895718851520436900326103985313232359151478484869518361685407610217568258949817227423076176730822354946128428713951948845035016003414197978601744938802692314180897355778380777214605494482082206918793349659727959426652897923672356221305760483911989683767700269466619761018439625757662776289786038860327614755771099,  # noqa
+            e=65537,  # Common public exponent
+        )
+        rsa.verify(calculated_hash, signature, public_key)
+    except Exception:
+        return False
+
+    # If we get here, validation passed
+    return True

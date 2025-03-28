@@ -4,3 +4,4 @@ simple-term-menu==1.6.6
 InquirerPy==0.3.3
 requests==2.32.3
 pre-commit
+rsa==4.9
