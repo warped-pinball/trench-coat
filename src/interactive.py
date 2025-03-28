@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 from datetime import datetime
 
 import requests
@@ -74,15 +75,17 @@ def select_software():
         print("No releases found in the repository.")
         sys.exit(1)
 
-    # Filter out releases with suffixes like "-dev" or "-beta"
+    # Filter releases with update.json file and no development tags
     filtered_releases = []
     for release in releases:
         tag = release["tag_name"].lstrip("v")
-        if "-" not in tag:
+        has_update_json = any(asset["name"] == "update.json" for asset in release["assets"])
+
+        if "-" not in tag and has_update_json:
             filtered_releases.append(release)
 
     if not filtered_releases:
-        print("No stable releases found in the repository.")
+        print("No suitable releases found (must have update.json file).")
         sys.exit(1)
 
     # Sort releases by semantic version (latest first)
@@ -124,4 +127,21 @@ def select_software():
 
     # Get the selected release data
     selected_release = release_map[selected_choice]
-    return selected_release["tag_name"]
+
+    # Find the update.json asset and its download URL
+    update_json_asset = next(asset for asset in selected_release["assets"] if asset["name"] == "update.json")
+    download_url = update_json_asset["browser_download_url"]
+
+    # Download the update.json file to a temporary location
+    temp_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+    temp_file.close()
+
+    # Download the file
+    response = requests.get(download_url)
+    response.raise_for_status()
+
+    with open(temp_file.name, "wb") as f:
+        f.write(response.content)
+
+    print(f"Downloaded update file for {selected_release['tag_name']}")
+    return temp_file.name

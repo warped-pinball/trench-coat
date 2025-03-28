@@ -11,8 +11,11 @@ PICO_PID = 0x0005
 BAUD_RATE = 115200  # Standard baud rate for MicroPython REPL
 
 
-def flash_software(tag_name, ports=None):
-    pass
+def flash_software(software, ports=None):
+    with open(software, "rb") as f:
+        # print the first line
+        first_line = f.readline().decode("utf-8").strip()
+        print(f"First line of {software}: {first_line}")
     # download update file
 
     # validate with public key
