@@ -1,7 +1,9 @@
+import json
 import os
 import shutil
 import sys
 import time
+from binascii import a2b_base64
 
 import src.ray as ray
 
@@ -105,7 +107,134 @@ def list_rpi_rp2_drives_linux_macos():
 # Software flashing functions
 #
 
+# def make_file_line(
+#     file_path: str,
+#     file_contents: bytes,
+#     custom_log: Optional[str] = None,
+#     execute: bool = False,
+# ) -> str:
+#     """
+#     Create a single line representing one file’s update entry:
+#         filename + jsonDictionary + base64EncodedFileContents
+
+#     Example line:
+#         some_file.py{"checksum":"ABCD","bytes":1234,"log":"Uploading file"}c29tZSB
+#     """
+#     checksum = crc16_ccitt(file_contents)
+#     file_size = len(file_contents)
+#     b64_data = base64.b64encode(file_contents).decode("utf-8")
+
+#     file_meta = {
+#         "checksum": checksum,
+#         "bytes": file_size,
+#         "log": custom_log if custom_log else f"Uploading {file_path}",
+#     }
+#     if execute:
+#         file_meta["execute"] = True
+
+#     meta_json = json.dumps(file_meta, separators=(",", ":"))
+#     return f"{file_path}{meta_json}{b64_data}"
+
 
 def flash_software(software, port):
-    print(f"Flashing {software} to {port}")
-    # flash to all devices
+    # confirm known update format
+    with open(software, "r") as f:
+        software_metadata = json.loads(f.readline())
+        if "update_file_format" not in software_metadata:
+            print("Error: file format not specified in update.json.")
+            sys.exit(1)
+        if software_metadata["update_file_format"] != "1.0":
+            print("Error: update.json file format not recognized. Check for more recent versions of this program.")
+            sys.exit(1)
+    print("Software file format confirmed.")
+
+    # Create a local directory for extracted files
+    extract_dir = os.path.join(os.getcwd(), "extracted_software_files")
+    os.makedirs(extract_dir, exist_ok=True)
+    print(f"Extracting files to: {extract_dir}")
+
+    # iterate over the files in the update.json file (each line except the first)
+    with open(software, "r") as f:
+        f.readline()  # Skip the first line (metadata)
+
+        for line in f.readlines():
+            line = line.strip()
+            if line == "":
+                continue
+
+            # split the line into filename, metadata, and contents
+            filename, metadata_and_contents = line.split("{", 1)
+            metadata, contents = metadata_and_contents.split("}", 1)
+            metadata = json.loads("{" + metadata + "}")
+
+            # decode base64 contents
+            contents = a2b_base64(contents)
+
+            # Write contents to local file
+            file_path = os.path.join(extract_dir, filename)
+
+            # Create directories if needed
+            os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+
+            if filename == "":
+                # This is probably the last line in the file, which is the signature
+                continue
+
+            print(f"Writing to: {file_path}")
+            with open(file_path, "wb") as local_file:
+                local_file.write(contents)
+
+            print(f"Extracted: {filename}")
+
+            if metadata.get("execute", False):
+                print(f"File would be executed on board: {filename}")
+
+    # Wipe all files from the board
+    print("Wiping all files from the board recursively...")
+    ray.send_command(
+        port,
+        BAUD_RATE,
+        "\n\r".join(
+            [
+                "import os",
+                "def remove(path):",
+                "    try:",
+                "        os.remove(path)",
+                "    except OSError:",
+                "        for entry in os.listdir(path):",
+                "            remove('/'.join((path, entry)))",
+                "        os.rmdir(path)",
+                "",
+                "for entry in os.listdir('/'):",
+                "    remove('/' + entry)",
+            ]
+        ),
+    )
+
+    # Create directories first
+    unique_dirs = set()
+    for root, dirs, files in os.walk(extract_dir):
+        for file in files:
+            local_path = os.path.join(root, file)
+            relative_path = os.path.relpath(local_path, extract_dir)
+            directory = os.path.dirname(relative_path)
+            if directory and directory not in unique_dirs:
+                unique_dirs.add(directory)
+                print(f"Creating directory: {directory}")
+                ray.send_command(port, BAUD_RATE, f"os.mkdir('{directory}')")
+
+    # Copy files to the board
+    for root, dirs, files in os.walk(extract_dir):
+        for file in files:
+            local_path = os.path.join(root, file)
+            relative_path = os.path.relpath(local_path, extract_dir)
+            print(f"Copying {local_path} to {relative_path}")
+            ray.copy_file_to_board(port, BAUD_RATE, local_path, relative_path)
+
+    # restart the board
+    print("Restarting the board...")
+    ray.send_command(port, BAUD_RATE, "import machine; machine.reset()")
+
+
+# TODO add instructions for when the board doesn't show up (go to boot loader mode and nuke)
+# TODO JUST WRITE THE FILES TO THE BOARD IN BASE64 and HAVE THE BOARD DECODE THEM

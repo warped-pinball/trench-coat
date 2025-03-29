@@ -20,51 +20,59 @@ def find_boards(vid: int = 0x2E8A, pid: int = 0x0005) -> list:
     return boards
 
 
-def copy_file_to_board(port: str, baud: int, local_path: str, remote_path: str) -> bool:
+def copy_file_to_board(port: str, baud: int, local_path: str, remote_path: str, chunk_size: int = 1024) -> bool:
     """
-    Copy a local text file to the MicroPython board's filesystem.
-    Returns True if successful, False if an error occurred.
+    Copy a local text file to the MicroPython board's filesystem, breaking content into
+    small chunks to avoid memory issues.
+
+    Args:
+        port: Serial port of the board
+        baud: Baud rate
+        local_path: Path to local file to copy
+        remote_path: Path on the board's filesystem
+        chunk_size: Size of chunks to write (default 2048 bytes)
+
+    Returns:
+        True if successful, False otherwise
     """
     try:
-        ser = serial.Serial(port, baud, timeout=1)
-    except serial.SerialException as e:
-        print(f"Failed to open port {port}: {e}")
-        return False
+        # Open the file on the board
+        send_command(port, baud, f"f = open('{remote_path}', 'wb')")
 
-    try:
-        # Open file on MicroPython for writing
-        cmd = f"f = open('{remote_path}', 'w')"
-        ser.write((cmd + "\r\n").encode("utf-8"))
-        time.sleep(0.1)
-        ser.read(ser.in_waiting or 1)  # flush echo
+        # Read and send the file in chunks
+        with open(local_path, "rb") as local_file:
+            buffer = local_file.read()
+            total_size = len(buffer)
+            transferred = 0
 
-        # Read local file and send its contents
-        with open(local_path, "r") as f:
-            for line in f:
-                # Ensure each line is properly terminated with newline in the file
-                # Escape single quotes in the line to not break the string syntax
-                safe_line = line.rstrip("\n").replace("'", "\\'")
-                cmd = f"f.write('{safe_line}\\n')"
-                ser.write((cmd + "\r\n").encode("utf-8"))
-                time.sleep(0.05)
-                ser.read(ser.in_waiting or 1)  # flush echo for each line
+            # Process the file in chunks
+            for i in range(0, len(buffer), chunk_size):
+                chunk = buffer[i : i + chunk_size]
+                # Escape special characters
+                hex_str = "".join(f"\\x{byte:02x}" for byte in chunk)
+                send_command(port, baud, f"f.write(bytes('{hex_str}', 'latin1'))")
 
-        # Close the file on the device
-        ser.write(b"f.close()\r\n")
-        time.sleep(0.1)
-        ser.read(ser.in_waiting or 1)
+                # Update progress on same line
+                transferred += len(chunk)
+                percent = (transferred / total_size) * 100
+                print(f"\rTransferring: {percent:.1f}% complete", end="", flush=True)
+
+            # Print newline after completion
+            print()
+
+        # Close the file on the board
+        send_command(port, baud, "f.close()")
+        return True
+
     except Exception as e:
-        print(f"Error during file transfer: {e}")
+        print(f"\nError during file transfer: {e}")
         return False
-    finally:
-        ser.close()
-    return True
 
 
 def send_command(port: str, baud: int, command: str, timeout: float = 1) -> str:
     """
     Send a command to a MicroPython board over serial and return its output.
-    Handles REPL interaction more robustly.
+    Supports multi-line commands.
     """
     try:
         # Open serial connection
@@ -76,14 +84,12 @@ def send_command(port: str, baud: int, command: str, timeout: float = 1) -> str:
             # Clear any pending input
             ser.read(ser.in_waiting or 1)
 
-            # Send the command followed by Enter
+            # Send the line followed by Enter
             ser.write(f"{command}\r\n".encode("utf-8"))
             time.sleep(0.1)
 
-            # Read the response (which includes command echo)
-            output = ser.read(ser.in_waiting or 1).decode("utf-8", errors="ignore")
-
-            return output
+            # Read the response after each line
+            return ser.read(ser.in_waiting or 1).decode("utf-8", errors="ignore")
     except Exception as e:
         print(f"Error during communication: {e}")
         return None
