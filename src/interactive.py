@@ -23,6 +23,14 @@ def select_uf2():
     """Interactive function to select a UF2 file"""
     uf2_file_paths = list_bundled_uf2()
     uf2_files = [os.path.basename(f) for f in uf2_file_paths]
+
+    # sort the list of uf2 files
+    uf2_files.sort()
+
+    # remove nuke.uf2 from the list
+    if "nuke.uf2" in uf2_files:
+        uf2_files.remove("nuke.uf2")
+
     uf2_files.append("Custom")
     uf2_files.append("Exit")
 

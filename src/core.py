@@ -8,6 +8,7 @@ import time
 from binascii import a2b_base64
 
 from src.ray import Ray
+from src.util import graceful_exit
 
 
 #
@@ -29,6 +30,28 @@ def flash_firmware(firmware_path, board: Ray):
         time.sleep(1)
         bootloader_drives = list_rpi_rp2_drives()
 
+    # wipe the board with nuke.uf2
+    nuke_path = [path for path in list_bundled_uf2() if "nuke.uf2" in path][0]
+    if len(nuke_path) == 0:
+        print("Error: nuke.uf2 not found in bundled UF2 files.")
+        graceful_exit()
+
+    for drive in bootloader_drives:
+        print(f"Flashing {nuke_path} to {drive}")
+        copy_uf2_to_bootloader(nuke_path, drive)
+
+    time.sleep(5)
+
+    # Setup a timeout to wait for bootloader drives to appear
+    start_time = time.time()
+    bootloader_drives = []
+
+    while len(bootloader_drives) == 0:
+        if (time.time() - start_time) > 20:
+            raise TimeoutError("Timeout waiting for devices to appear in bootloader mode.")
+        time.sleep(1)
+        bootloader_drives = list_rpi_rp2_drives()
+
     for drive in bootloader_drives:
         print(f"Flashing {firmware_path} to {drive}")
         copy_uf2_to_bootloader(firmware_path, drive)
@@ -37,7 +60,6 @@ def flash_firmware(firmware_path, board: Ray):
 def copy_uf2_to_bootloader(firmware_path, drive=None):
     """Copy the UF2 file to the bootloader drive"""
     if drive:
-        print(f"Flashing UF2 to {drive}")
         shutil.copy(firmware_path, drive)
         return
 
@@ -151,10 +173,6 @@ def flash_software(software, board: Ray):
 
                 if metadata.get("execute", False):
                     print(f"File would be executed on board: {filename}")
-
-        # Wipe all files from the board
-        print("Wiping all files from the board recursively...")
-        board.wipe_board()
 
         # Copy files to the board
         for root, dirs, files in os.walk(extract_dir):
