@@ -3,6 +3,7 @@ import time
 from src.core import flash_firmware, flash_software
 from src.interactive import display_welcome, select_software, select_uf2
 from src.ray import Ray
+from src.util import graceful_exit
 
 
 def main():
@@ -46,4 +47,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"\nError: {e}")
+        graceful_exit()
