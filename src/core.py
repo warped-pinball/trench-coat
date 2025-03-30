@@ -14,21 +14,35 @@ from src.util import graceful_exit
 #
 # Firmware flashing functions
 #
-def flash_firmware(firmware_path, board: Ray):
+def flash_firmware(firmware_path):
     """Core function to flash firmware to devices"""
-    # Enter bootloader mode for normal ports
-    print(f"Putting {board.port} into bootloader mode...")
-    board.enter_bootloader_mode()
+    # get all bootloader drives
+    bootloader_drives = list_rpi_rp2_drives()
+    initial_drives = len(bootloader_drives)
+    if len(bootloader_drives) > 0:
+        print(f"Found {len(bootloader_drives)} devices already in bootloader mode.")
+
+    boards = Ray.find_boards()
+    initial_boards = len(boards)
+    if len(boards) > 0:
+        print(f"Found {len(boards)} devices not already in bootloader mode.")
+        # Find all connected devices
+        for board in boards:
+            # Put the board in bootloader mode
+            print(f"Putting {board.port} into bootloader mode...")
+            board.enter_bootloader_mode()
 
     # Setup a timeout to wait for bootloader drives to appear
     start_time = time.time()
     bootloader_drives = []
-
-    while len(bootloader_drives) == 0:
+    expected_drive_count = initial_drives + initial_boards
+    while len(bootloader_drives) < expected_drive_count:
         if (time.time() - start_time) > 20:
             raise TimeoutError("Timeout waiting for devices to appear in bootloader mode.")
         time.sleep(1)
         bootloader_drives = list_rpi_rp2_drives()
+        print(f"\rFound {len(bootloader_drives)} of {expected_drive_count} devices in bootloader mode.", end="")
+    print()
 
     # wipe the board with nuke.uf2
     nuke_path = [path for path in list_bundled_uf2() if "nuke.uf2" in path][0]
@@ -42,15 +56,15 @@ def flash_firmware(firmware_path, board: Ray):
 
     time.sleep(5)
 
-    # Setup a timeout to wait for bootloader drives to appear
-    start_time = time.time()
+    # wait for the drives to reappear
     bootloader_drives = []
-
-    while len(bootloader_drives) == 0:
+    while len(bootloader_drives) < expected_drive_count:
         if (time.time() - start_time) > 20:
             raise TimeoutError("Timeout waiting for devices to appear in bootloader mode.")
         time.sleep(1)
         bootloader_drives = list_rpi_rp2_drives()
+        print(f"\rFound {len(bootloader_drives)} of {expected_drive_count} devices in bootloader mode.", end="")
+    print()
 
     for drive in bootloader_drives:
         print(f"Flashing {firmware_path} to {drive}")
@@ -124,7 +138,7 @@ def list_rpi_rp2_drives_linux_macos():
 #
 # Software flashing functions
 #
-def flash_software(software, board: Ray):
+def flash_software(software):
     # confirm known update format
     with open(software, "r") as f:
         software_metadata = json.loads(f.readline())
@@ -174,16 +188,20 @@ def flash_software(software, board: Ray):
                 if metadata.get("execute", False):
                     print(f"File would be executed on board: {filename}")
 
-        # Copy files to the board
-        for root, dirs, files in os.walk(extract_dir):
-            for file in files:
-                local_path = os.path.join(root, file)
-                relative_path = os.path.relpath(local_path, extract_dir)
-                board.copy_file_to_board(local_path, relative_path)
+        boards = Ray.find_boards()
+        print(f"Found {len(boards)} devices to flash software to.")
+        for i, board in enumerate(boards):
+            print(f"Flashing software to {board.port} ({i+1} of {len(boards)})")
+            # Copy files to the board
+            for root, dirs, files in os.walk(extract_dir):
+                for file in files:
+                    local_path = os.path.join(root, file)
+                    relative_path = os.path.relpath(local_path, extract_dir)
+                    board.copy_file_to_board(local_path, relative_path)
 
-        # restart the board
-        print("Restarting the board...")
-        board.restart_board()
+            # restart the board
+            print("Restarting the board...")
+            board.restart_board()
     finally:
         # Clean up the temporary directory
         shutil.rmtree(extract_dir, ignore_errors=True)

@@ -1,30 +1,48 @@
 import time
 
 from src.core import flash_firmware, flash_software
-from src.interactive import display_welcome, select_devices, select_software, select_uf2
+from src.interactive import display_welcome, select_software, select_uf2
+from src.ray import Ray
 
 
 def main():
     display_welcome()
-
-    # Step 1: Device detection and selection
-    ports = select_devices()
-
-    # Step 2: Firmware selection
+    # Firmware selection
     firmware = select_uf2()
 
-    # Step 3: Select the software to flash
+    # Select the software to flash
     software = select_software()
 
-    for port in ports:
-        # Step 4: Flash the firmware
-        if firmware:
-            flash_firmware(firmware, port)
-            time.sleep(5)
+    # flash devices until user cancels
+    dots = 0
+    while True:
+        # Listen for devices / allow user to exit
+        print("If you want to cancel, press Ctrl+C")
+        while True:
+            boards = Ray.find_boards()
+            if boards:
+                print()
+                break
 
-        # Step 5: Flash the software
-        if software:
-            flash_software(software, port)
+            dots = (dots + 1) % 5
+            print("\rListening for devices" + "." * dots + " " * (5 - dots), end="")
+            time.sleep(0.5)
+
+        flash_firmware(firmware)
+        time.sleep(5)
+
+        flash_software(software)
+        time.sleep(5)
+
+        dots = 0
+        while boards:
+            boards = Ray.find_boards()
+            if not boards:
+                print()
+                break
+            dots = (dots + 1) % 5
+            print("\rWaiting for devices to disconnect" + "." * dots + " " * (5 - dots), end="")
+            time.sleep(0.5)
 
 
 if __name__ == "__main__":
