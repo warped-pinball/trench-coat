@@ -217,7 +217,6 @@ def flash_software(software, port):
         for file in files:
             local_path = os.path.join(root, file)
             relative_path = os.path.relpath(local_path, extract_dir)
-            print(f"Copying {local_path} to {relative_path}")
             ray.copy_file_to_board(port, BAUD_RATE, local_path, relative_path)
 
     # restart the board

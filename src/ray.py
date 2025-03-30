@@ -21,7 +21,7 @@ def find_boards(vid: int = 0x2E8A, pid: int = 0x0005) -> list:
     return boards
 
 
-def copy_file_to_board(port: str, baud: int, local_path: str, remote_path: str, chunk_size: int = 2048):
+def copy_file_to_board(port: str, baud: int, local_path: str, remote_path: str, chunk_size: int = 1024):
     # Read and send the file in chunks
     with open(local_path, "rb") as local_file:
         # Make sure binascii module is available on the board
@@ -56,7 +56,7 @@ def copy_file_to_board(port: str, baud: int, local_path: str, remote_path: str, 
             # Update progress on same line
             transferred += len(chunk)
             percent = (transferred / total_size) * 100
-            print(f"\rTransferring: {percent:.1f}% complete", end="", flush=True)
+            print(f"\r{remote_path}: {percent:.1f}%", end="", flush=True)
 
         # Print newline after completion
         print()
