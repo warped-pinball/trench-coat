@@ -27,8 +27,6 @@ class Ray:
         return boards
 
     def copy_file_to_board(self, local_path: str, remote_path: str, chunk_size: int = 2048):
-        # make sure notihng is running on the board
-        self.ctrl_c()
         # Read and send the file in chunks
         print(f"\r{remote_path}: 0%", end="", flush=True)
         with open(local_path, "rb") as local_file:

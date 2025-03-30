@@ -20,8 +20,6 @@ def wait_for(listen_func, msg, timeout=10):
     :param msg: Message to display while waiting.
     :param timeout: Timeout in seconds.
     """
-    print()
-    print("press Ctrl+C to exit")
     start_time = time.time()
     dots = 0
     try:

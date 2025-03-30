@@ -193,6 +193,7 @@ def flash_software(software):
         for i, board in enumerate(boards):
             print(f"Flashing software to {board.port} ({i+1} of {len(boards)})")
             # Copy files to the board
+            board.ctrl_c()
             for root, dirs, files in os.walk(extract_dir):
                 for file in files:
                     local_path = os.path.join(root, file)

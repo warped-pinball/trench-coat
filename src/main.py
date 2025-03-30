@@ -18,7 +18,11 @@ def main():
         def firmware_listen_func():
             return len(Ray.find_boards() + list_rpi_rp2_drives())
 
-        wait_for(firmware_listen_func, "Listening for devices", timeout=None)
+        try:
+            wait_for(firmware_listen_func, "Listening for devices (press ctrl + c to exit)", timeout=None)
+        except KeyboardInterrupt:
+            print("\nExiting...")
+            graceful_exit(now=True)
 
         total_boards = firmware_listen_func()
 
@@ -28,11 +32,11 @@ def main():
         def software_listen_func():
             return len(Ray.find_boards()) == total_boards
 
-        wait_for(software_listen_func, "Waiting for boards to reboot", timeout=None)
+        wait_for(software_listen_func, "Waiting for boards to reboot", timeout=360)
 
         flash_software(software)
 
-        wait_for(software_listen_func, "Waiting for boards to reboot", timeout=None)
+        wait_for(software_listen_func, "Waiting for boards to reboot", timeout=360)
 
         # wait until all devices disconnect
         def restart_listen_func():
@@ -46,4 +50,5 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         print(f"\nError: {e}")
+        print("Program did not exit gracefully, do not install boards in pinball machine without sucsessfully flashing.")
         graceful_exit()
