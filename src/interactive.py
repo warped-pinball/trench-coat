@@ -80,7 +80,12 @@ def select_software():
 
     # get list of all releases from github
     url = "https://api.github.com/repos/warped-pinball/vector/releases"
-    response = requests.get(url)
+    try:
+        response = requests.get(url)
+    except requests.exceptions.Timeout:
+        print("Connection timed out. Please check your internet connection.")
+        graceful_exit()
+
     response.raise_for_status()
     releases = response.json()
 

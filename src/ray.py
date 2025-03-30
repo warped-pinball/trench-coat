@@ -27,6 +27,8 @@ class Ray:
         return boards
 
     def copy_file_to_board(self, local_path: str, remote_path: str, chunk_size: int = 2048):
+        # make sure notihng is running on the board
+        self.ctrl_c()
         # Read and send the file in chunks
         print(f"\r{remote_path}: 0%", end="", flush=True)
         with open(local_path, "rb") as local_file:
@@ -101,8 +103,20 @@ class Ray:
         # return the response
         return self.ser.read(self.ser.in_waiting or 1).decode("utf-8", errors="ignore")
 
+    def ctrl_c(self):
+        """
+        Send Ctrl+C to the MicroPython board to interrupt any running code.
+        """
+        try:
+            self.ser.write(b"\x03\x03")  # Ctrl+C
+            time.sleep(0.5)  # Give time for the interrupt to process
+        except Exception:
+            # we expect this throw an exception when the board disconnects
+            pass
+
     def enter_bootloader_mode(self):
         try:
+            self.ctrl_c()
             self.send_command("import machine; machine.bootloader()")
         except Exception:
             # we expect this throw an exception when the board disconnects
@@ -129,6 +143,7 @@ class Ray:
 
     def restart_board(self):
         try:
+            self.ctrl_c()
             self.send_command("import machine; machine.reset()")
         except Exception:
             # we excpect this to fail once the board disconnects
