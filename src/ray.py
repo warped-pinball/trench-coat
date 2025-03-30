@@ -36,7 +36,9 @@ def copy_file_to_board(port: str, baud: int, local_path: str, remote_path: str, 
                     f"f = open('{remote_path}', 'wb')",
                     # define a function to convert base64 to binary and write to file
                     "def w(data):",
-                    "    f.write(binascii.a2b_base64(data))" "",
+                    "    f.write(binascii.a2b_base64(data))",
+                    "    f.flush()",
+                    "",
                 ]
             ),
         )

@@ -180,11 +180,8 @@ def flash_software(software, port):
                 # This is probably the last line in the file, which is the signature
                 continue
 
-            print(f"Writing to: {file_path}")
             with open(file_path, "wb") as local_file:
                 local_file.write(contents)
-
-            print(f"Extracted: {filename}")
 
             if metadata.get("execute", False):
                 print(f"File would be executed on board: {filename}")
@@ -194,6 +191,7 @@ def flash_software(software, port):
     ray.wipe_board(port, BAUD_RATE)
 
     # Create directories first
+    print("Creating directories on the board...")
     unique_dirs = set()
     for root, dirs, files in os.walk(extract_dir):
         for file in files:
@@ -202,7 +200,6 @@ def flash_software(software, port):
             directory = os.path.dirname(relative_path)
             if directory and directory not in unique_dirs:
                 unique_dirs.add(directory)
-                print(f"Creating directory: {directory}")
 
     ray.send_command(
         port,
