@@ -11,7 +11,7 @@ import rsa
 from InquirerPy import inquirer
 
 from src.core import list_bundled_uf2
-from src.ray import PICO_PID, PICO_VID, find_boards
+from src.ray import Ray
 
 
 def display_welcome():
@@ -42,35 +42,31 @@ def select_uf2():
     return uf2_file_paths[uf2_files.index(menu_entry)]
 
 
-def select_devices():
-    ports = find_boards(PICO_VID, PICO_PID)
+def select_devices() -> list[Ray]:
+    boards = Ray.find_boards()
+    ports = [board.port for board in boards]
     ports.append("Exit")
 
     if not ports:
         print("No Warped Pinball devices found. Please plug in via USB and try again. Do not press the 'BOOTSEL' button when plugging in.")
+        input("Press ENTER to exit.")
         sys.exit(0)
 
-    selections = []
-    while not selections:
-        if len(ports) == 2:
+    selected_ports = []
+    while not selected_ports:
+        if len(boards) < 2:
             single_choice = inquirer.select(message="Confirm the device to flash:", choices=ports).execute()
-            if single_choice == "Exit":
-                sys.exit(0)
-            selections = [single_choice]
+            selected_ports = [single_choice]
         else:
             print("\nUse SPACE to select multiple devices, then press ENTER to confirm.")
-            selections = inquirer.checkbox(message="Confirm the devices to flash:", choices=ports).execute()
+            selected_ports = inquirer.checkbox(message="Confirm the devices to flash:", choices=ports).execute()
 
-        if not selections:
+        if not selected_ports:
             print("No devices selected. Please select at least one device.")
-        elif "Exit" in selections:
+        elif "Exit" in selected_ports:
             sys.exit(0)
 
-    # make sure we return a list of ports
-    if isinstance(selections, str):
-        selections = [selections]
-
-    return selections
+    return [board for board in boards if board.port in selected_ports]
 
 
 def select_software():

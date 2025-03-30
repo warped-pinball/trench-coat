@@ -7,22 +7,17 @@ import tempfile
 import time
 from binascii import a2b_base64
 
-import src.ray as ray
-
-# Known USB vendor/product ID for the Pico (RP2040 MicroPython)
-PICO_VID = 0x2E8A
-PICO_PID = 0x0005
-BAUD_RATE = 115200
+from src.ray import Ray
 
 
 #
 # Firmware flashing functions
 #
-def flash_firmware(firmware_path, port):
+def flash_firmware(firmware_path, board: Ray):
     """Core function to flash firmware to devices"""
     # Enter bootloader mode for normal ports
-    print(f"Putting {port} into bootloader mode...")
-    ray.enter_bootloader_mode(port, BAUD_RATE)
+    print(f"Putting {board.port} into bootloader mode...")
+    board.enter_bootloader_mode()
 
     # Setup a timeout to wait for bootloader drives to appear
     start_time = time.time()
@@ -107,37 +102,7 @@ def list_rpi_rp2_drives_linux_macos():
 #
 # Software flashing functions
 #
-
-# def make_file_line(
-#     file_path: str,
-#     file_contents: bytes,
-#     custom_log: Optional[str] = None,
-#     execute: bool = False,
-# ) -> str:
-#     """
-#     Create a single line representing one file’s update entry:
-#         filename + jsonDictionary + base64EncodedFileContents
-
-#     Example line:
-#         some_file.py{"checksum":"ABCD","bytes":1234,"log":"Uploading file"}c29tZSB
-#     """
-#     checksum = crc16_ccitt(file_contents)
-#     file_size = len(file_contents)
-#     b64_data = base64.b64encode(file_contents).decode("utf-8")
-
-#     file_meta = {
-#         "checksum": checksum,
-#         "bytes": file_size,
-#         "log": custom_log if custom_log else f"Uploading {file_path}",
-#     }
-#     if execute:
-#         file_meta["execute"] = True
-
-#     meta_json = json.dumps(file_meta, separators=(",", ":"))
-#     return f"{file_path}{meta_json}{b64_data}"
-
-
-def flash_software(software, port):
+def flash_software(software, board: Ray):
     # confirm known update format
     with open(software, "r") as f:
         software_metadata = json.loads(f.readline())
@@ -189,52 +154,18 @@ def flash_software(software, port):
 
         # Wipe all files from the board
         print("Wiping all files from the board recursively...")
-        ray.wipe_board(port, BAUD_RATE)
-
-        # Create directories first
-        print("Creating directories on the board...")
-        unique_dirs = set()
-        for root, dirs, files in os.walk(extract_dir):
-            for file in files:
-                local_path = os.path.join(root, file)
-                relative_path = os.path.relpath(local_path, extract_dir)
-                directory = os.path.dirname(relative_path)
-                if directory and directory not in unique_dirs:
-                    unique_dirs.add(directory)
-
-        print(f"Creating directories: {unique_dirs}")
-
-        ray.send_command(
-            port,
-            BAUD_RATE,
-            "\n\r".join(
-                # fmt: off
-                [
-                    "import os",
-                    "def try_mkdir(path):",
-                    "    try:",
-                    "        os.mkdir(path)",
-                    "    except OSError:",
-                    "        pass",
-                    ""
-                ]
-                + [
-                    f"try_mkdir('{directory}')" for directory in unique_dirs
-                ]
-                # fmt: on
-            ),
-        )
+        board.wipe_board()
 
         # Copy files to the board
         for root, dirs, files in os.walk(extract_dir):
             for file in files:
                 local_path = os.path.join(root, file)
                 relative_path = os.path.relpath(local_path, extract_dir)
-                ray.copy_file_to_board(port, BAUD_RATE, local_path, relative_path)
+                board.copy_file_to_board(local_path, relative_path)
 
         # restart the board
         print("Restarting the board...")
-        ray.send_command(port, BAUD_RATE, "import machine; machine.reset()")
+        board.restart_board()
     finally:
         # Clean up the temporary directory
         shutil.rmtree(extract_dir, ignore_errors=True)
