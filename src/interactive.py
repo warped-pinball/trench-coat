@@ -1,7 +1,6 @@
 import hashlib
 import json
 import os
-import sys
 import tempfile
 from binascii import a2b_base64, unhexlify
 from datetime import datetime
@@ -12,6 +11,7 @@ from InquirerPy import inquirer
 
 from src.core import list_bundled_uf2
 from src.ray import Ray
+from src.util import graceful_exit
 
 
 def display_welcome():
@@ -29,14 +29,13 @@ def select_uf2():
     menu_entry = inquirer.select(message="Select a firmware file to flash:", choices=uf2_files, default=0).execute()
 
     if menu_entry == "Exit":
-        print("Exiting...\n")
-        sys.exit(0)
+        graceful_exit(now=True)
     elif menu_entry == "Custom":
         path = inquirer.text("Enter the full path to a custom UF2 file:").execute()
         print(f"You entered: {path}")
         if not os.path.isfile(path):
-            print("Invalid file path. Exiting.")
-            sys.exit(1)
+            print("Invalid file path.")
+            graceful_exit()
         return path
 
     return uf2_file_paths[uf2_files.index(menu_entry)]
@@ -49,8 +48,7 @@ def select_devices() -> list[Ray]:
 
     if not ports:
         print("No Warped Pinball devices found. Please plug in via USB and try again. Do not press the 'BOOTSEL' button when plugging in.")
-        input("Press ENTER to exit.")
-        sys.exit(0)
+        graceful_exit()
 
     selected_ports = []
     while not selected_ports:
@@ -64,7 +62,7 @@ def select_devices() -> list[Ray]:
         if not selected_ports:
             print("No devices selected. Please select at least one device.")
         elif "Exit" in selected_ports:
-            sys.exit(0)
+            graceful_exit(now=True)
 
     return [board for board in boards if board.port in selected_ports]
 
@@ -80,7 +78,7 @@ def select_software():
 
     if not releases:
         print("No releases found in the repository.")
-        sys.exit(1)
+        graceful_exit()
 
     # Filter releases with update.json file and no development tags
     filtered_releases = []
@@ -93,7 +91,7 @@ def select_software():
 
     if not filtered_releases:
         print("No suitable releases found (must have update.json file).")
-        sys.exit(1)
+        graceful_exit()
 
     # Sort releases by semantic version (latest first)
     def parse_version(tag_name):
@@ -129,8 +127,7 @@ def select_software():
     selected_choice = inquirer.select(message="Select a software release:", choices=choices).execute()
 
     if selected_choice == "Exit":
-        print("Exiting...\n")
-        sys.exit(0)
+        graceful_exit(now=True)
 
     # Get the selected release data
     selected_release = release_map[selected_choice]
@@ -154,9 +151,9 @@ def select_software():
         print(f"Downloaded update file for {selected_release['tag_name']}")
         return temp_file.name
     else:
-        print("Downloaded update file is invalid. Exiting.")
+        print("Downloaded update file is invalid.")
         os.remove(temp_file.name)
-        sys.exit(1)
+        graceful_exit()
 
 
 def read_last_significant_line(filepath):

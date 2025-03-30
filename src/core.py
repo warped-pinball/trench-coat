@@ -171,4 +171,6 @@ def flash_software(software, board: Ray):
         shutil.rmtree(extract_dir, ignore_errors=True)
 
 
+# TODO validate all files were correctly copied using hashes
+
 # TODO add instructions for when the board doesn't show up (go to boot loader mode and nuke)
