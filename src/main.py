@@ -1,9 +1,7 @@
-import time
-
-from src.core import flash_firmware, flash_software
+from src.core import flash_firmware, flash_software, list_rpi_rp2_drives
 from src.interactive import display_welcome, select_software, select_uf2
 from src.ray import Ray
-from src.util import graceful_exit
+from src.util import graceful_exit, wait_for
 
 
 def main():
@@ -15,35 +13,32 @@ def main():
     software = select_software()
 
     # flash devices until user cancels
-    dots = 0
     while True:
-        # Listen for devices / allow user to exit
-        print("If you want to cancel, press Ctrl+C")
-        while True:
-            boards = Ray.find_boards()
-            if boards:
-                print()
-                break
+        # wait until at least one device is connected
+        def firmware_listen_func():
+            return len(Ray.find_boards() + list_rpi_rp2_drives())
 
-            dots = (dots + 1) % 5
-            print("\rListening for devices" + "." * dots + " " * (5 - dots), end="")
-            time.sleep(0.5)
+        wait_for(firmware_listen_func, "Listening for devices", timeout=None)
+
+        total_boards = firmware_listen_func()
 
         flash_firmware(firmware)
-        time.sleep(5)
+
+        # wait until all devices finish flashing
+        def software_listen_func():
+            return len(Ray.find_boards()) == total_boards
+
+        wait_for(software_listen_func, "Waiting for boards to reboot", timeout=None)
 
         flash_software(software)
-        time.sleep(5)
 
-        dots = 0
-        while boards:
-            boards = Ray.find_boards()
-            if not boards:
-                print()
-                break
-            dots = (dots + 1) % 5
-            print("\rWaiting for devices to disconnect" + "." * dots + " " * (5 - dots), end="")
-            time.sleep(0.5)
+        wait_for(software_listen_func, "Waiting for boards to reboot", timeout=None)
+
+        # wait until all devices disconnect
+        def restart_listen_func():
+            return len(Ray.find_boards() + list_rpi_rp2_drives()) == 0
+
+        wait_for(restart_listen_func, "Please disconnect all boards", timeout=None)
 
 
 if __name__ == "__main__":

@@ -87,34 +87,26 @@ class Ray:
         if isinstance(command, list):
             command = "\n\r".join(command)
 
-        try:
-            # Make sure the serial port is open
-            if not self.ser.is_open:
-                self.ser.open()
+        # Make sure the serial port is open
+        if not self.ser.is_open:
+            self.ser.open()
 
-            # Interrupt any running program
-            self.ser.write(b"\r\x03\x03")  # Send Ctrl+C twice
-            time.sleep(0.1)
+        # Clear any pending input
+        self.ser.read(self.ser.in_waiting or 1)
 
-            # Clear any pending input
-            self.ser.read(self.ser.in_waiting or 1)
+        # Send the command followed by Enter
+        self.ser.write(f"{command}\r\n".encode("utf-8"))
+        time.sleep(0.1)
 
-            # Send the command followed by Enter
-            self.ser.write(f"{command}\r\n".encode("utf-8"))
-            time.sleep(0.1)
-
-            # Read the response
-            response = self.ser.read(self.ser.in_waiting or 1).decode("utf-8", errors="ignore")
-            return response
-        except Exception as e:
-            print(f"Error during communication: {e}")
-            return None
+        # return the response
+        return self.ser.read(self.ser.in_waiting or 1).decode("utf-8", errors="ignore")
 
     def enter_bootloader_mode(self):
         try:
             self.send_command("import machine; machine.bootloader()")
-        except Exception as e:
-            print(f"Error entering bootloader mode: {e}")
+        except Exception:
+            # we expect this throw an exception when the board disconnects
+            pass
 
     def wipe_board(self):
         self.send_command(
