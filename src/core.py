@@ -1,7 +1,9 @@
 import json
 import os
 import shutil
+import string
 import sys
+import tempfile
 import time
 from binascii import a2b_base64
 
@@ -81,7 +83,6 @@ def list_rpi_rp2_drives():
 
 def list_rpi_rp2_drives_windows():
     """List all RPI-RP2 drives on Windows"""
-    import string
 
     found_drives = []
     for drive in string.ascii_uppercase:
@@ -148,92 +149,95 @@ def flash_software(software, port):
             sys.exit(1)
     print("Software file format confirmed.")
 
-    # Create a local directory for extracted files
-    extract_dir = os.path.join(os.getcwd(), "extracted_software_files")
-    os.makedirs(extract_dir, exist_ok=True)
-    print(f"Extracting files to: {extract_dir}")
+    # Create a temporary directory for extracted files
+    extract_dir = tempfile.mkdtemp(prefix="software_update_")
+    print(f"Extracting files to temporary directory: {extract_dir}")
 
-    # iterate over the files in the update.json file (each line except the first)
-    with open(software, "r") as f:
-        f.readline()  # Skip the first line (metadata)
+    try:
+        # iterate over the files in the update.json file (each line except the first)
+        with open(software, "r") as f:
+            f.readline()  # Skip the first line (metadata)
 
-        for line in f.readlines():
-            line = line.strip()
-            if line == "":
-                continue
+            for line in f.readlines():
+                line = line.strip()
+                if line == "":
+                    continue
 
-            # split the line into filename, metadata, and contents
-            filename, metadata_and_contents = line.split("{", 1)
-            metadata, contents = metadata_and_contents.split("}", 1)
-            metadata = json.loads("{" + metadata + "}")
+                # split the line into filename, metadata, and contents
+                filename, metadata_and_contents = line.split("{", 1)
+                metadata, contents = metadata_and_contents.split("}", 1)
+                metadata = json.loads("{" + metadata + "}")
 
-            # decode base64 contents
-            contents = a2b_base64(contents)
+                # decode base64 contents
+                contents = a2b_base64(contents)
 
-            # Write contents to local file
-            file_path = os.path.join(extract_dir, filename)
+                # Write contents to local file
+                file_path = os.path.join(extract_dir, filename)
 
-            # Create directories if needed
-            os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+                # Create directories if needed
+                os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
 
-            if filename == "":
-                # This is probably the last line in the file, which is the signature
-                continue
+                if filename == "":
+                    # This is probably the last line in the file, which is the signature
+                    continue
 
-            with open(file_path, "wb") as local_file:
-                local_file.write(contents)
+                with open(file_path, "wb") as local_file:
+                    local_file.write(contents)
 
-            if metadata.get("execute", False):
-                print(f"File would be executed on board: {filename}")
+                if metadata.get("execute", False):
+                    print(f"File would be executed on board: {filename}")
 
-    # Wipe all files from the board
-    print("Wiping all files from the board recursively...")
-    ray.wipe_board(port, BAUD_RATE)
+        # Wipe all files from the board
+        print("Wiping all files from the board recursively...")
+        ray.wipe_board(port, BAUD_RATE)
 
-    # Create directories first
-    print("Creating directories on the board...")
-    unique_dirs = set()
-    for root, dirs, files in os.walk(extract_dir):
-        for file in files:
-            local_path = os.path.join(root, file)
-            relative_path = os.path.relpath(local_path, extract_dir)
-            directory = os.path.dirname(relative_path)
-            if directory and directory not in unique_dirs:
-                unique_dirs.add(directory)
+        # Create directories first
+        print("Creating directories on the board...")
+        unique_dirs = set()
+        for root, dirs, files in os.walk(extract_dir):
+            for file in files:
+                local_path = os.path.join(root, file)
+                relative_path = os.path.relpath(local_path, extract_dir)
+                directory = os.path.dirname(relative_path)
+                if directory and directory not in unique_dirs:
+                    unique_dirs.add(directory)
 
-    print(f"Creating directories: {unique_dirs}")
+        print(f"Creating directories: {unique_dirs}")
 
-    ray.send_command(
-        port,
-        BAUD_RATE,
-        "\n\r".join(
-            # fmt: off
-            [
-                "import os",
-                "def try_mkdir(path):",
-                "    try:",
-                "        os.mkdir(path)",
-                "    except OSError:",
-                "        pass",
-                ""
-            ]
-            + [
-                f"try_mkdir('{directory}')" for directory in unique_dirs
-            ]
-            # fmt: on
-        ),
-    )
+        ray.send_command(
+            port,
+            BAUD_RATE,
+            "\n\r".join(
+                # fmt: off
+                [
+                    "import os",
+                    "def try_mkdir(path):",
+                    "    try:",
+                    "        os.mkdir(path)",
+                    "    except OSError:",
+                    "        pass",
+                    ""
+                ]
+                + [
+                    f"try_mkdir('{directory}')" for directory in unique_dirs
+                ]
+                # fmt: on
+            ),
+        )
 
-    # Copy files to the board
-    for root, dirs, files in os.walk(extract_dir):
-        for file in files:
-            local_path = os.path.join(root, file)
-            relative_path = os.path.relpath(local_path, extract_dir)
-            ray.copy_file_to_board(port, BAUD_RATE, local_path, relative_path)
+        # Copy files to the board
+        for root, dirs, files in os.walk(extract_dir):
+            for file in files:
+                local_path = os.path.join(root, file)
+                relative_path = os.path.relpath(local_path, extract_dir)
+                ray.copy_file_to_board(port, BAUD_RATE, local_path, relative_path)
 
-    # restart the board
-    print("Restarting the board...")
-    ray.send_command(port, BAUD_RATE, "import machine; machine.reset()")
+        # restart the board
+        print("Restarting the board...")
+        ray.send_command(port, BAUD_RATE, "import machine; machine.reset()")
+    finally:
+        # Clean up the temporary directory
+        shutil.rmtree(extract_dir, ignore_errors=True)
 
 
 # TODO add instructions for when the board doesn't show up (go to boot loader mode and nuke)
