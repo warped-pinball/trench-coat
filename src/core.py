@@ -208,7 +208,20 @@ def flash_software(software, port):
         port,
         BAUD_RATE,
         "\n\r".join(
-            ["import os", "def try_mkdir(path):", "    try:", "        os.mkdir(path)", "    except OSError:", "        pass", ""] + [f"try_mkdir('{directory}')" for directory in unique_dirs]
+            # fmt: off
+            [
+                "import os",
+                "def try_mkdir(path):",
+                "    try:",
+                "        os.mkdir(path)",
+                "    except OSError:",
+                "        pass",
+                ""
+            ]
+            + [
+                f"try_mkdir('{directory}')" for directory in unique_dirs
+            ]
+            # fmt: on
         ),
     )
 
