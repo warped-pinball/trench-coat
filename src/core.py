@@ -191,25 +191,7 @@ def flash_software(software, port):
 
     # Wipe all files from the board
     print("Wiping all files from the board recursively...")
-    ray.send_command(
-        port,
-        BAUD_RATE,
-        "\n\r".join(
-            [
-                "import os",
-                "def remove(path):",
-                "    try:",
-                "        os.remove(path)",
-                "    except OSError:",
-                "        for entry in os.listdir(path):",
-                "            remove('/'.join((path, entry)))",
-                "        os.rmdir(path)",
-                "",
-                "for entry in os.listdir('/'):",
-                "    remove('/' + entry)",
-            ]
-        ),
-    )
+    ray.wipe_board(port, BAUD_RATE)
 
     # Create directories first
     unique_dirs = set()
@@ -221,7 +203,14 @@ def flash_software(software, port):
             if directory and directory not in unique_dirs:
                 unique_dirs.add(directory)
                 print(f"Creating directory: {directory}")
-                ray.send_command(port, BAUD_RATE, f"os.mkdir('{directory}')")
+
+    ray.send_command(
+        port,
+        BAUD_RATE,
+        "\n\r".join(
+            ["import os", "def try_mkdir(path):", "    try:", "        os.mkdir(path)", "    except OSError:", "        pass", ""] + [f"try_mkdir('{directory}')" for directory in unique_dirs]
+        ),
+    )
 
     # Copy files to the board
     for root, dirs, files in os.walk(extract_dir):
