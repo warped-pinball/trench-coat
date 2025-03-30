@@ -201,6 +201,8 @@ def flash_software(software, port):
             if directory and directory not in unique_dirs:
                 unique_dirs.add(directory)
 
+    print(f"Creating directories: {unique_dirs}")
+
     ray.send_command(
         port,
         BAUD_RATE,
@@ -235,4 +237,3 @@ def flash_software(software, port):
 
 
 # TODO add instructions for when the board doesn't show up (go to boot loader mode and nuke)
-# TODO JUST WRITE THE FILES TO THE BOARD IN BASE64 and HAVE THE BOARD DECODE THEM
