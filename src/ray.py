@@ -12,12 +12,14 @@ COMMAND_CHUNK_SIZE = 2048
 
 
 class Ray:
-    def __init__(self, port: str):
-        self.port = port
-        self.open()
+    _instances = set()
 
+    def __init__(self, port: str):
         # Track this instance
         Ray._instances.add(self)
+
+        self.port = port
+        self.open()
 
     def __del__(self):
         # Clean up when the instance is garbage-collected
