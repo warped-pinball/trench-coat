@@ -18,6 +18,19 @@ def wait_for_devices():
     return len(Ray.find_boards() + list_rpi_rp2_drives())
 
 
+def wait_for_disconnect():
+    # wait until all devices disconnect
+    def discconnect_listen_func():
+        print("Flash complete, dissconnect all boards before flashing more", end="")
+        return len(Ray.find_boards() + list_rpi_rp2_drives()) == 0
+
+    try:
+        wait_for(discconnect_listen_func, timeout=None)
+    except KeyboardInterrupt:
+        print("\nExiting...")
+        graceful_exit(now=True)
+
+
 def main():
     display_welcome()
     # Firmware selection
@@ -44,16 +57,7 @@ def main():
 
         wait_for(software_listen_func, timeout=360)
 
-        # wait until all devices disconnect
-        def restart_listen_func():
-            print("Flash complete, dissconnect all boards before flashing more", end="")
-            return len(Ray.find_boards() + list_rpi_rp2_drives()) == 0
-
-        try:
-            wait_for(restart_listen_func, timeout=None)
-        except KeyboardInterrupt:
-            print("\nExiting...")
-            graceful_exit(now=True)
+        wait_for_disconnect()
 
 
 if __name__ == "__main__":

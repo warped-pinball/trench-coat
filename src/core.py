@@ -59,7 +59,7 @@ def flash_firmware(firmware_path):
     # Wait for the drives to start executing uf2s
     def wait_for_flash():
         drives = list_rpi_rp2_drives()
-        print(f"Waiting for ({len(drives)} of {len(bootloader_drives)}) devices to finish flashing", end="")
+        print(f"Waiting for ({len(bootloader_drives) - len(drives)} of {len(bootloader_drives)}) devices to begin flashing", end="")
         return len(drives) < len(bootloader_drives)
 
     wait_for(wait_for_flash, timeout=60)
@@ -87,7 +87,19 @@ def flash_firmware(firmware_path):
         print(f"Waiting for ({len(boards)} of {len(bootloader_drives)}) boards to restart", end="")
         return len(boards) >= len(bootloader_drives)
 
-    wait_for(wait_for_rpi_rp2, timeout=60)
+    try:
+        wait_for(wait_for_rpi_rp2, timeout=60)
+    except TimeoutError:
+        msg = [
+            "Please try running the program again.",
+            "If this issue persists:",
+            "    1. eject / safely remove all drives mounted in the process. They will all contain a file called 'INFO_UF2.TXT'",
+            "    2. unplug all devices from the computer and wait for 10 seconds",
+            "    3. plug the devices back in and run the program again",
+            "    4. if the issue persists, please reachout for help",
+        ]
+        print("\n" + "\n".join(msg))
+        graceful_exit()
 
 
 def list_bundled_uf2():
