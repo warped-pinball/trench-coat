@@ -4,6 +4,20 @@ from src.ray import Ray
 from src.util import graceful_exit, wait_for
 
 
+def wait_for_devices():
+    def firmware_listen_func():
+        print("Listening for devices (press ctrl + c to exit)", end="")
+        return len(Ray.find_boards() + list_rpi_rp2_drives())
+
+    try:
+        wait_for(firmware_listen_func, timeout=None)
+    except KeyboardInterrupt:
+        print("\nExiting...")
+        graceful_exit(now=True)
+
+    return len(Ray.find_boards() + list_rpi_rp2_drives())
+
+
 def main():
     display_welcome()
     # Firmware selection
@@ -15,34 +29,27 @@ def main():
     # flash devices until user cancels
     while True:
         # wait until at least one device is connected
-        def firmware_listen_func():
-            return len(Ray.find_boards() + list_rpi_rp2_drives())
-
-        try:
-            wait_for(firmware_listen_func, "Listening for devices (press ctrl + c to exit)", timeout=None)
-        except KeyboardInterrupt:
-            print("\nExiting...")
-            graceful_exit(now=True)
-
-        total_boards = firmware_listen_func()
+        total_boards = wait_for_devices()
 
         flash_firmware(firmware)
 
         # wait until all devices finish flashing
         def software_listen_func():
+            print("Waiting for boards to reboot", end="")
             return len(Ray.find_boards()) == total_boards
 
-        wait_for(software_listen_func, "Waiting for boards to reboot", timeout=360)
+        wait_for(software_listen_func, timeout=360)
 
         flash_software(software)
 
-        wait_for(software_listen_func, "Waiting for boards to reboot", timeout=360)
+        wait_for(software_listen_func, timeout=360)
 
         # wait until all devices disconnect
         def restart_listen_func():
+            print("Flash complete, dissconnect all boards before flashing more", end="")
             return len(Ray.find_boards() + list_rpi_rp2_drives()) == 0
 
-        wait_for(restart_listen_func, "Please disconnect all boards", timeout=None)
+        wait_for(restart_listen_func, timeout=None)
 
 
 if __name__ == "__main__":

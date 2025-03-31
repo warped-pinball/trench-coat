@@ -13,7 +13,7 @@ def graceful_exit(now=False):
     sys.exit(0)
 
 
-def wait_for(listen_func, msg, timeout=10):
+def wait_for(listen_func, timeout=10):
     """
     Wait for a condition to be met or timeout.
     :param listen_func: Function to call to check the condition.
@@ -28,8 +28,10 @@ def wait_for(listen_func, msg, timeout=10):
                 raise TimeoutError(f"Timeout after waiting for {timeout} seconds.")
             time.sleep(0.5)
             dots = (dots + 1) % 5
-            print("\r" + msg + "." * dots + " " * (5 - dots), end="")
-            if listen_func():
+            print("\r", end="")
+            return_val = listen_func()
+            print("." * dots + " " * (5 - dots), end="")
+            if return_val:
                 print()
                 break
     except KeyboardInterrupt:

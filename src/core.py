@@ -8,41 +8,44 @@ import time
 from binascii import a2b_base64
 
 from src.ray import Ray
-from src.util import graceful_exit
+from src.util import graceful_exit, wait_for
 
 
 #
 # Firmware flashing functions
 #
-def flash_firmware(firmware_path):
-    """Core function to flash firmware to devices"""
+def get_all_boards_into_bootloader():
     # get all bootloader drives
     bootloader_drives = list_rpi_rp2_drives()
     initial_drives = len(bootloader_drives)
-    if len(bootloader_drives) > 0:
-        print(f"Found {len(bootloader_drives)} devices already in bootloader mode.")
+    print(f"Found {len(bootloader_drives)} devices already in bootloader mode.")
 
+    # Find all connected devices
     boards = Ray.find_boards()
     initial_boards = len(boards)
-    if len(boards) > 0:
-        print(f"Found {len(boards)} devices not already in bootloader mode.")
-        # Find all connected devices
-        for board in boards:
-            # Put the board in bootloader mode
-            print(f"Putting {board.port} into bootloader mode...")
-            board.enter_bootloader_mode()
+    print(f"Found {len(boards)} devices not already in bootloader mode.")
+    for board in boards:
+        # Put the board in bootloader mode
+        print(f"Putting {board.port} into bootloader mode...")
+        board.enter_bootloader_mode()
 
-    # Setup a timeout to wait for bootloader drives to appear
-    start_time = time.time()
-    bootloader_drives = []
     expected_drive_count = initial_drives + initial_boards
-    while len(bootloader_drives) < expected_drive_count:
-        if (time.time() - start_time) > 20:
-            raise TimeoutError("Timeout waiting for devices to appear in bootloader mode.")
-        time.sleep(1)
-        bootloader_drives = list_rpi_rp2_drives()
-        print(f"\rFound {len(bootloader_drives)} of {expected_drive_count} devices in bootloader mode.", end="")
-    print()
+
+    # Wait for bootloader drives to appear
+    def wait_for_bootloader():
+        drives = list_rpi_rp2_drives()
+        print(f"Waiting for  ({len(drives)} of {expected_drive_count}) devices to appear in bootloader mode", end="")
+        return len(drives) >= expected_drive_count
+
+    wait_for(wait_for_bootloader, timeout=20)
+
+
+def flash_firmware(firmware_path):
+    """Core function to flash firmware to devices"""
+    get_all_boards_into_bootloader()
+
+    # Get the updated list of bootloader drives
+    bootloader_drives = list_rpi_rp2_drives()
 
     # wipe the board with nuke.uf2
     nuke_path = [path for path in list_bundled_uf2() if "nuke.uf2" in path][0]
@@ -51,54 +54,85 @@ def flash_firmware(firmware_path):
         graceful_exit()
 
     for drive in bootloader_drives:
-        print(f"Flashing {nuke_path} to {drive}")
-        copy_uf2_to_bootloader(nuke_path, drive)
+        print(f"Flashing {os.path.basename(nuke_path)} to {drive}")
+        shutil.copy(nuke_path, drive)
 
-    time.sleep(5)
+    # Wait for the drives to start executing uf2s
+    def wait_for_flash():
+        drives = list_rpi_rp2_drives()
+        print(f"Waiting for ({len(drives)} of {len(bootloader_drives)}) devices to finish flashing", end="")
+        return len(drives) < len(bootloader_drives)
 
-    # wait for the drives to reappear
-    bootloader_drives = []
-    while len(bootloader_drives) < expected_drive_count:
-        if (time.time() - start_time) > 20:
-            raise TimeoutError("Timeout waiting for devices to appear in bootloader mode.")
-        time.sleep(1)
+    wait_for(wait_for_flash, timeout=20)
+
+    # Wait for the drives to reappear after nuking
+    def wait_for_reappear():
+        drives = list_rpi_rp2_drives()
+        print(f"Waiting for {len(drives)} of {len(bootloader_drives)} to reappear in bootloader mode", end="")
+        return len(drives) >= len(bootloader_drives)
+
+    wait_for(wait_for_reappear, timeout=20)
+
+    # Get the final list of bootloader drives once they're all accounted for
+    # (They could have changed paths)
+    if len(bootloader_drives) == list_rpi_rp2_drives():
         bootloader_drives = list_rpi_rp2_drives()
-        print(f"\rFound {len(bootloader_drives)} of {expected_drive_count} devices in bootloader mode.", end="")
-    print()
 
     for drive in bootloader_drives:
-        print(f"Flashing {firmware_path} to {drive}")
-        copy_uf2_to_bootloader(firmware_path, drive)
-
-
-def copy_uf2_to_bootloader(firmware_path, drive=None):
-    """Copy the UF2 file to the bootloader drive"""
-    if drive:
-        shutil.copy(firmware_path, drive)
-        return
-
-    drives = list_rpi_rp2_drives()
-
-    if len(drives) == 0:
-        print("No Warped Pinball devices found in bootloader mode. Please put the device in bootloader mode and try again.")
-        sys.exit(0)
-
-    for i, drive in enumerate(drives):
-        print(f"Flashing board {i+1} of {len(drives)}")
+        print(f"Flashing {os.path.basename(firmware_path)} to {drive}")
         shutil.copy(firmware_path, drive)
 
+    # Wait for the drives to reappear as Ray devices
+    def wait_for_rpi_rp2():
+        boards = Ray.find_boards()
+        print(f"Waiting for ({len(boards)} of {len(bootloader_drives)}) boards to restart", end="")
+        return len(boards) >= len(bootloader_drives)
 
-def resource_path(relative_path: str) -> str:
-    """Returns the absolute path to a resource that may be bundled by PyInstaller."""
-    if hasattr(sys, "_MEIPASS"):
-        return os.path.join(sys._MEIPASS, relative_path)
-    else:
-        return os.path.join(os.path.dirname(__file__), relative_path)
+    wait_for(wait_for_rpi_rp2, timeout=20)
+
+
+def flash_uf2_to_drives(uf2_path, expected_drive_count, wait_after=True):
+    """
+    Flash a UF2 file to all bootloader drives and optionally wait for them to reappear
+
+    Args:
+        uf2_path: Path to the UF2 file to flash
+        expected_drive_count: Number of drives expected to be available
+        wait_after: Whether to wait for drives to reappear after flashing
+
+    Returns:
+        List of bootloader drives after flashing and waiting
+    """
+    # Get the current list of bootloader drives
+    bootloader_drives = list_rpi_rp2_drives()
+
+    # Flash the UF2 to each drive
+    for drive in bootloader_drives:
+        print(f"Flashing {uf2_path} to {drive}")
+        shutil.copy(uf2_path, drive)
+
+    if wait_after:
+        time.sleep(5)  # Give devices time to process
+
+        # Wait for the drives to reappear
+        def wait_for_reappear():
+            drives = list_rpi_rp2_drives()
+            print(f"Waiting for ({len(drives)} of {expected_drive_count}) devices to reappear in bootloader mode", end="")
+            return len(drives) >= expected_drive_count
+
+        wait_for(wait_for_reappear, timeout=20)
+
+    # Return the updated list of bootloader drives
+    return list_rpi_rp2_drives()
 
 
 def list_bundled_uf2():
     """List available bundled UF2 files"""
-    uf2_dir = resource_path("uf2")
+    if hasattr(sys, "_MEIPASS"):
+        uf2_dir = os.path.join(sys._MEIPASS, "uf2")
+    else:
+        uf2_dir = os.path.join(os.path.dirname(__file__), "uf2")
+
     if not os.path.isdir(uf2_dir):
         return []
     return [os.path.join(uf2_dir, f) for f in os.listdir(uf2_dir) if f.lower().endswith(".uf2")]
@@ -106,32 +140,21 @@ def list_bundled_uf2():
 
 def list_rpi_rp2_drives():
     """List all RPI-RP2 drives on Windows, Linux, or macOS"""
+    found_drives = []
     if os.name == "nt":
-        return list_rpi_rp2_drives_windows()
+        # Check for Windows
+        for drive in string.ascii_uppercase:
+            info_path = f"{drive}:\\INFO_UF2.TXT"
+            if os.path.exists(info_path):
+                found_drives.append(f"{drive}:\\")
     else:
-        return list_rpi_rp2_drives_linux_macos()
-
-
-def list_rpi_rp2_drives_windows():
-    """List all RPI-RP2 drives on Windows"""
-
-    found_drives = []
-    for drive in string.ascii_uppercase:
-        info_path = f"{drive}:\\INFO_UF2.TXT"
-        if os.path.exists(info_path):
-            found_drives.append(f"{drive}:\\")
-    return found_drives
-
-
-def list_rpi_rp2_drives_linux_macos():
-    """List all RPI-RP2 drives on Linux/macOS"""
-    found_drives = []
-    for drive_dir in ["/Volumes", "/media"]:
-        if not os.path.isdir(drive_dir):
-            continue
-        for root, dirs, files in os.walk(drive_dir):
-            if "INFO_UF2.TXT" in files:
-                found_drives.append(root)
+        # Check for macOS and Linux
+        for drive_dir in ["/Volumes", "/media"]:
+            if not os.path.isdir(drive_dir):
+                continue
+            for root, dirs, files in os.walk(drive_dir):
+                if "INFO_UF2.TXT" in files:
+                    found_drives.append(root)
     return found_drives
 
 
@@ -200,14 +223,22 @@ def flash_software(software):
                     relative_path = os.path.relpath(local_path, extract_dir)
                     board.copy_file_to_board(local_path, relative_path)
 
+        for board in boards:
             # restart the board
             print("Restarting the board...")
             board.restart_board()
+
+        # wait for the boards to reboot
+        def wait_for_reboot():
+            restarted_boards = Ray.find_boards()
+            print(f" ({len(restarted_boards)} of {len(boards)}) restarted", end="")
+            return len(boards) <= len(restarted_boards)
+
+        wait_for(wait_for_reboot, timeout=20)
+
     finally:
         # Clean up the temporary directory
         shutil.rmtree(extract_dir, ignore_errors=True)
 
 
 # TODO validate all files were correctly copied using hashes
-
-# TODO add instructions for when the board doesn't show up (go to boot loader mode and nuke)
