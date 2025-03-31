@@ -49,7 +49,11 @@ def main():
             print("Flash complete, dissconnect all boards before flashing more", end="")
             return len(Ray.find_boards() + list_rpi_rp2_drives()) == 0
 
-        wait_for(restart_listen_func, timeout=None)
+        try:
+            wait_for(restart_listen_func, timeout=None)
+        except KeyboardInterrupt:
+            print("\nExiting...")
+            graceful_exit(now=True)
 
 
 if __name__ == "__main__":
