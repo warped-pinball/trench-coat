@@ -37,7 +37,7 @@ def get_all_boards_into_bootloader():
         print(f"Waiting for  ({len(drives)} of {expected_drive_count}) devices to appear in bootloader mode", end="")
         return len(drives) >= expected_drive_count
 
-    wait_for(wait_for_bootloader, timeout=20)
+    wait_for(wait_for_bootloader, timeout=60)
 
 
 def flash_firmware(firmware_path):
@@ -63,7 +63,7 @@ def flash_firmware(firmware_path):
         print(f"Waiting for ({len(drives)} of {len(bootloader_drives)}) devices to finish flashing", end="")
         return len(drives) < len(bootloader_drives)
 
-    wait_for(wait_for_flash, timeout=20)
+    wait_for(wait_for_flash, timeout=60)
 
     # Wait for the drives to reappear after nuking
     def wait_for_reappear():
@@ -71,7 +71,7 @@ def flash_firmware(firmware_path):
         print(f"Waiting for {len(drives)} of {len(bootloader_drives)} to reappear in bootloader mode", end="")
         return len(drives) >= len(bootloader_drives)
 
-    wait_for(wait_for_reappear, timeout=20)
+    wait_for(wait_for_reappear, timeout=60)
 
     # Get the final list of bootloader drives once they're all accounted for
     # (They could have changed paths)
@@ -88,7 +88,7 @@ def flash_firmware(firmware_path):
         print(f"Waiting for ({len(boards)} of {len(bootloader_drives)}) boards to restart", end="")
         return len(boards) >= len(bootloader_drives)
 
-    wait_for(wait_for_rpi_rp2, timeout=20)
+    wait_for(wait_for_rpi_rp2, timeout=60)
 
 
 def flash_uf2_to_drives(uf2_path, expected_drive_count, wait_after=True):
@@ -120,7 +120,7 @@ def flash_uf2_to_drives(uf2_path, expected_drive_count, wait_after=True):
             print(f"Waiting for ({len(drives)} of {expected_drive_count}) devices to reappear in bootloader mode", end="")
             return len(drives) >= expected_drive_count
 
-        wait_for(wait_for_reappear, timeout=20)
+        wait_for(wait_for_reappear, timeout=60)
 
     # Return the updated list of bootloader drives
     return list_rpi_rp2_drives()
@@ -234,7 +234,7 @@ def flash_software(software):
             print(f" ({len(restarted_boards)} of {len(boards)}) restarted", end="")
             return len(boards) <= len(restarted_boards)
 
-        wait_for(wait_for_reboot, timeout=20)
+        wait_for(wait_for_reboot, timeout=60)
 
     finally:
         # Clean up the temporary directory
