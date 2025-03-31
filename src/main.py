@@ -23,7 +23,7 @@ signal.signal(signal.SIGINT, signal_handler)
 def wait_for_devices():
     def firmware_listen_func():
         print("Listening for devices (press ctrl + c to exit)", end="")
-        return len(Ray.find_boards() + list_rpi_rp2_drives())
+        return len(Ray.find_board_ports() + list_rpi_rp2_drives())
 
     try:
         wait_for(firmware_listen_func, timeout=None)
@@ -31,14 +31,14 @@ def wait_for_devices():
         print("\nExiting...")
         graceful_exit(now=True)
 
-    return len(Ray.find_boards() + list_rpi_rp2_drives())
+    return len(Ray.find_board_ports() + list_rpi_rp2_drives())
 
 
 def wait_for_disconnect():
     # wait until all devices disconnect
     def discconnect_listen_func():
         print("Flash complete, disconnetc all boards before flashing more", end="")
-        return len(Ray.find_boards() + list_rpi_rp2_drives()) == 0
+        return len(Ray.find_board_ports() + list_rpi_rp2_drives()) == 0
 
     try:
         wait_for(discconnect_listen_func, timeout=None)
@@ -65,7 +65,7 @@ def main():
         # wait until all devices finish flashing
         def software_listen_func():
             print("Waiting for boards to reboot", end="")
-            return len(Ray.find_boards()) == total_boards
+            return len(Ray.find_board_ports()) == total_boards
 
         wait_for(software_listen_func, timeout=360)
 

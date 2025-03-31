@@ -50,8 +50,7 @@ def select_uf2():
 
 
 def select_devices() -> list[Ray]:
-    boards = Ray.find_boards()
-    ports = [board.port for board in boards]
+    ports = Ray.find_board_ports()
     ports.append("Exit")
 
     if not ports:
@@ -60,7 +59,7 @@ def select_devices() -> list[Ray]:
 
     selected_ports = []
     while not selected_ports:
-        if len(boards) < 2:
+        if len(ports) < 2:
             single_choice = inquirer.select(message="Confirm the device to flash:", choices=ports).execute()
             selected_ports = [single_choice]
         else:
@@ -72,7 +71,7 @@ def select_devices() -> list[Ray]:
         elif "Exit" in selected_ports:
             graceful_exit(now=True)
 
-    return [board for board in boards if board.port in selected_ports]
+    return selected_ports
 
 
 def select_software():

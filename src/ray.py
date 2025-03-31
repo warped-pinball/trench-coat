@@ -50,13 +50,12 @@ class Ray:
             self.ser.flushOutput()
 
     @classmethod
-    def find_boards(cls) -> list:
-        boards = []
-        for port in serial.tools.list_ports.comports():
-            if port.vid is not None and port.pid is not None:
-                if port.vid == PICO_VID and port.pid == PICO_PID:
-                    boards.append(Ray(port.device))
-        return boards
+    def find_board_ports(cls) -> list[str]:
+        board_ports = []
+        for port_info in serial.tools.list_ports.comports():
+            if port_info.vid == PICO_VID and port_info.pid == PICO_PID:
+                board_ports.append(port_info.device)
+        return board_ports
 
     def copy_files_to_board(self, path_map: dict[str, str]):
         def generate_transfer_script(path_map: dict[str, str]):
@@ -149,6 +148,7 @@ class Ray:
         If a list is provided, it will be joined with newline and carriage return characters.
         """
         if isinstance(command, list):
+            print(f"Sending command: {command}")
             command = "\n\r".join(command)
 
         # Make sure the serial port is open

@@ -20,15 +20,15 @@ def get_all_boards_into_bootloader():
     print(f"Found {len(bootloader_drives)} devices already in bootloader mode.")
 
     # Find all connected devices
-    boards = Ray.find_boards()
-    initial_boards = len(boards)
-    print(f"Found {len(boards)} devices not already in bootloader mode.")
-    for board in boards:
+    ports = Ray.find_board_ports()
+    initial_ports = len(ports)
+    print(f"Found {len(ports)} devices not already in bootloader mode.")
+    for port in ports:
         # Put the board in bootloader mode
-        print(f"Putting {board.port} into bootloader mode...")
-        board.enter_bootloader_mode()
+        print(f"Putting {port} into bootloader mode...")
+        Ray(port).enter_bootloader_mode()
 
-    expected_drive_count = initial_drives + initial_boards
+    expected_drive_count = initial_drives + initial_ports
 
     # Wait for bootloader drives to appear
     def wait_for_bootloader():
@@ -55,6 +55,7 @@ def flash_firmware(firmware_path):
     for drive in bootloader_drives:
         print(f"Flashing {os.path.basename(nuke_path)} to {drive}")
         shutil.copy(nuke_path, drive)
+        os.sync()
 
     # Wait for the drives to start executing uf2s
     def wait_for_flash():
@@ -80,10 +81,11 @@ def flash_firmware(firmware_path):
     for drive in bootloader_drives:
         print(f"Flashing {os.path.basename(firmware_path)} to {drive}")
         shutil.copy(firmware_path, drive)
+        os.sync()
 
     # Wait for the drives to reappear as Ray devices
     def wait_for_rpi_rp2():
-        boards = Ray.find_boards()
+        boards = Ray.find_board_ports()
         print(f"Waiting for ({len(boards)} of {len(bootloader_drives)}) boards to restart", end="")
         return len(boards) >= len(bootloader_drives)
 
@@ -187,10 +189,11 @@ def flash_software(software):
                 if metadata.get("execute", False):
                     print(f"File would be executed on board: {filename}")
 
-        boards = Ray.find_boards()
-        print(f"Found {len(boards)} devices to flash software to.")
-        for i, board in enumerate(boards):
-            print(f"Flashing software to {board.port} ({i+1} of {len(boards)})")
+        ports = Ray.find_board_ports()
+        print(f"Found {len(ports)} devices to flash software to.")
+        for i, port in enumerate(ports):
+            board = Ray(port)
+            print(f"Flashing software to {board.port} ({i+1} of {len(ports)})")
             # Copy files to the board
             board.ctrl_c()
             # for root, dirs, files in os.walk(extract_dir):
@@ -209,16 +212,16 @@ def flash_software(software):
             # Copy files to the board
             board.copy_files_to_board(local_remote_path_map)
 
-        for board in boards:
+        for board in ports:
             # restart the board
             print("Restarting the board...")
             board.restart_board()
 
         # wait for the boards to reboot
         def wait_for_reboot():
-            restarted_boards = Ray.find_boards()
-            print(f" ({len(restarted_boards)} of {len(boards)}) restarted", end="")
-            return len(boards) <= len(restarted_boards)
+            restarted_boards = Ray.find_board_ports()
+            print(f" ({len(restarted_boards)} of {len(ports)}) restarted", end="")
+            return len(ports) <= len(restarted_boards)
 
         wait_for(wait_for_reboot, timeout=60)
 
