@@ -1,11 +1,14 @@
 import sys
 import time
 
+from src.ray import Ray
+
 
 def graceful_exit(now=False):
     """
     Gracefully exit the program.
     """
+    Ray.close_all()
     if not now:
         print()
         print()

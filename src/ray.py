@@ -14,9 +14,38 @@ COMMAND_CHUNK_SIZE = 2048
 class Ray:
     def __init__(self, port: str):
         self.port = port
-        self.ser = serial.Serial(port, 115200, timeout=0.1)
-        self.ser.flushInput()
-        self.ser.flushOutput()
+        self.open()
+
+        # Track this instance
+        Ray._instances.add(self)
+
+    def __del__(self):
+        # Clean up when the instance is garbage-collected
+        self.close()
+
+    def close(self):
+        """Properly close the serial connection"""
+        if hasattr(self, "ser") and self.ser and self.ser.is_open:
+            try:
+                self.ser.close()
+            except Exception:
+                pass  # Already closed or error closing
+        # Remove from tracked instances
+        if self in Ray._instances:
+            Ray._instances.remove(self)
+
+    @classmethod
+    def close_all(cls):
+        """Close all Ray instances"""
+        for ray in list(cls._instances):
+            ray.close()
+
+    def open(self):
+        """Open the serial connection"""
+        if not hasattr(self, "ser") or not self.ser or not self.ser.is_open:
+            self.ser = serial.Serial(self.port, 115200, timeout=0.1)
+            self.ser.flushInput()
+            self.ser.flushOutput()
 
     @classmethod
     def find_boards(cls) -> list:
@@ -27,68 +56,13 @@ class Ray:
                     boards.append(Ray(port.device))
         return boards
 
-    # def copy_file_to_board(self, local_path: str, remote_path: str):
-    #     # Read and send the file in chunks
-    #     print(f"\r{remote_path}: 0%", end="", flush=True)
-    #     with open(local_path, "rb") as local_file:
-    #         command = [
-    #             "import os",
-    #             "import binascii",
-    #         ]
-    #         if len(os.path.dirname(remote_path)) > 0:
-    #             command += [
-    #                 # ensure the directory exists
-    #                 "try:",
-    #                 f"    os.mkdir('/{os.path.dirname(remote_path)}')",
-    #                 "except OSError:",
-    #                 "    pass",
-    #                 "",
-    #             ]
-    #         command += [
-    #             # open the file for writing
-    #             f"f = open('{remote_path}', 'wb')",
-    #             # define a function to convert base64 to binary and write to file
-    #             "def w(data):",
-    #             "    f.write(binascii.a2b_base64(data))",
-    #             "    f.flush()",
-    #             "",
-    #         ]
-
-    #         self.send_command(command=command)
-
-    #         buffer = local_file.read()
-    #         total_size = len(buffer)
-    #         transferred = 0
-
-    #         # Process the file in chunks
-    #         for i in range(0, len(buffer), FILE_TRANSFER_CHUNK_SIZE):
-    #             chunk = buffer[i : i + FILE_TRANSFER_CHUNK_SIZE]
-    #             # Convert to base64
-    #             base64_str = base64.b64encode(chunk).decode("ascii")
-    #             # Send command to decode base64 and write to file
-    #             self.send_command(f"w('{base64_str}')")
-
-    #             # Update progress on same line
-    #             transferred += len(chunk)
-    #             percent = (transferred / total_size) * 100
-    #             print(f"\r{remote_path}: {percent:.1f}%", end="", flush=True)
-
-    #         # Print newline after completion
-    #         print()
-
-    #     # Close the file on the board
-    #     self.send_command("f.close()")
-
     def copy_files_to_board(self, path_map: dict[str, str]):
-        def yield_lines(lines):
-            for line in lines:
-                yield line
-
         def generate_transfer_script(path_map: dict[str, str]):
-            yield yield_lines(
+            yield "\n\r".join(
                 [
                     "import os",
                     "import binascii",
+                    "f = None",
                     "def w(data):",
                     "    global f",
                     "    f.write(binascii.a2b_base64(data))",
@@ -97,13 +71,13 @@ class Ray:
                 ]
             )
 
-            for remote_path, local_path in path_map.items():
+            for local_path, remote_path in path_map.items():
                 # For consistency, we always use a leading slash
                 if remote_path[0] != "/":
                     remote_path = "/" + remote_path
 
                 if "/" in remote_path[1:]:
-                    yield yield_lines(
+                    yield "\n\r".join(
                         [
                             # ensure the directory exists
                             "try:",
@@ -125,7 +99,7 @@ class Ray:
                     # Process the file in chunks
                     for i in range(0, len(buffer), COMMAND_CHUNK_SIZE):
                         chunk = buffer[i : i + COMMAND_CHUNK_SIZE]
-                        # Convert to base64
+                        # Convert to base64 (this also ensures we are slightly under the chunk size limit)
                         base64_str = base64.b64encode(chunk).decode("ascii")
                         # Send command to decode base64 and write to file
                         yield f"w('{base64_str}')"
@@ -149,12 +123,22 @@ class Ray:
 
         # Send the script to the board in chunks
         next_script = []
+        next_script_len = 0
         while next_line := next(transfer_script, None) or next_script:
-            if isinstance(next_line, str):
-                if len(next_script) + len(next_line) > COMMAND_CHUNK_SIZE:
-                    self.send_command("\n\r".join(next_script))
-                    next_script = []
+            if next_line is None:
+                self.send_command(next_script)
+                next_script = []
+                next_script_len = 0
+                break
+
+            if next_script_len + len(next_line) > COMMAND_CHUNK_SIZE:
+                self.send_command(next_script)
+                next_script = [next_line]
+                next_script_len = len(next_line)
+                next_line = None
+            else:
                 next_script.append(next_line)
+                next_script_len += len(next_line)
 
     def send_command(self, command: Union[str, list[str]]):
         """
@@ -166,8 +150,8 @@ class Ray:
             command = "\n\r".join(command)
 
         # Make sure the serial port is open
-        if not self.ser.is_open:
-            self.ser.open()
+        if not hasattr(self, "ser") or not self.ser or not self.ser.is_open:
+            self.open()
 
         # Clear any pending input
         self.ser.read(self.ser.in_waiting or 1)

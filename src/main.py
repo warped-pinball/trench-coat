@@ -1,7 +1,23 @@
+import atexit
+import signal
+import traceback
+
 from src.core import flash_firmware, flash_software, list_rpi_rp2_drives
 from src.interactive import display_welcome, select_software, select_uf2
 from src.ray import Ray
 from src.util import graceful_exit, wait_for
+
+atexit.register(Ray.close_all)
+
+
+# Set up signal handler for Ctrl+C
+def signal_handler(sig, frame):
+    print("\nCtrl+C pressed. Cleaning up...")
+    Ray.close_all()
+    graceful_exit(now=True)
+
+
+signal.signal(signal.SIGINT, signal_handler)
 
 
 def wait_for_devices():
@@ -65,5 +81,6 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         print(f"\nError: {e}")
+        traceback.print_exc()
         print("Program did not exit gracefully, do not install boards in pinball machine without sucsessfully flashing.")
         graceful_exit()

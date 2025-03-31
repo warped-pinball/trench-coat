@@ -205,6 +205,8 @@ def flash_software(software):
                     local_path = os.path.join(root, file)
                     relative_path = os.path.relpath(local_path, extract_dir)
                     local_remote_path_map[local_path] = relative_path
+
+            # Copy files to the board
             board.copy_files_to_board(local_remote_path_map)
 
         for board in boards:
