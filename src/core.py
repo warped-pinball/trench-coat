@@ -4,7 +4,6 @@ import shutil
 import string
 import sys
 import tempfile
-import time
 from binascii import a2b_base64
 
 from src.ray import Ray
@@ -89,41 +88,6 @@ def flash_firmware(firmware_path):
         return len(boards) >= len(bootloader_drives)
 
     wait_for(wait_for_rpi_rp2, timeout=60)
-
-
-def flash_uf2_to_drives(uf2_path, expected_drive_count, wait_after=True):
-    """
-    Flash a UF2 file to all bootloader drives and optionally wait for them to reappear
-
-    Args:
-        uf2_path: Path to the UF2 file to flash
-        expected_drive_count: Number of drives expected to be available
-        wait_after: Whether to wait for drives to reappear after flashing
-
-    Returns:
-        List of bootloader drives after flashing and waiting
-    """
-    # Get the current list of bootloader drives
-    bootloader_drives = list_rpi_rp2_drives()
-
-    # Flash the UF2 to each drive
-    for drive in bootloader_drives:
-        print(f"Flashing {uf2_path} to {drive}")
-        shutil.copy(uf2_path, drive)
-
-    if wait_after:
-        time.sleep(5)  # Give devices time to process
-
-        # Wait for the drives to reappear
-        def wait_for_reappear():
-            drives = list_rpi_rp2_drives()
-            print(f"Waiting for ({len(drives)} of {expected_drive_count}) devices to reappear in bootloader mode", end="")
-            return len(drives) >= expected_drive_count
-
-        wait_for(wait_for_reappear, timeout=60)
-
-    # Return the updated list of bootloader drives
-    return list_rpi_rp2_drives()
 
 
 def list_bundled_uf2():
