@@ -67,7 +67,7 @@ def flash_firmware(firmware_path):
     # Wait for the drives to reappear after nuking
     def wait_for_reappear():
         drives = list_rpi_rp2_drives()
-        print(f"Waiting for {len(drives)} of {len(bootloader_drives)} to reappear in bootloader mode", end="")
+        print(f"Waiting for ({len(drives)} of {len(bootloader_drives)}) devices to enter bootloader mode", end="")
         return len(drives) >= len(bootloader_drives)
 
     wait_for(wait_for_reappear, timeout=60)
@@ -193,11 +193,19 @@ def flash_software(software):
             print(f"Flashing software to {board.port} ({i+1} of {len(boards)})")
             # Copy files to the board
             board.ctrl_c()
+            # for root, dirs, files in os.walk(extract_dir):
+            #     for file in files:
+            #         local_path = os.path.join(root, file)
+            #         relative_path = os.path.relpath(local_path, extract_dir)
+            #         board.copy_file_to_board(local_path, relative_path)
+
+            local_remote_path_map = {}
             for root, dirs, files in os.walk(extract_dir):
                 for file in files:
                     local_path = os.path.join(root, file)
                     relative_path = os.path.relpath(local_path, extract_dir)
-                    board.copy_file_to_board(local_path, relative_path)
+                    local_remote_path_map[local_path] = relative_path
+            board.copy_files_to_board(local_remote_path_map)
 
         for board in boards:
             # restart the board

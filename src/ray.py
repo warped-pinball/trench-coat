@@ -8,6 +8,7 @@ import serial.tools.list_ports
 
 PICO_VID = 0x2E8A
 PICO_PID = 0x0005
+COMMAND_CHUNK_SIZE = 2048
 
 
 class Ray:
@@ -26,57 +27,134 @@ class Ray:
                     boards.append(Ray(port.device))
         return boards
 
-    def copy_file_to_board(self, local_path: str, remote_path: str, chunk_size: int = 2048):
-        # Read and send the file in chunks
-        print(f"\r{remote_path}: 0%", end="", flush=True)
-        with open(local_path, "rb") as local_file:
-            command = [
-                "import os",
-                "import binascii",
-            ]
-            if len(os.path.dirname(remote_path)) > 0:
-                command += [
-                    # ensure the directory exists
-                    "try:",
-                    f"    os.mkdir('/{os.path.dirname(remote_path)}')",
-                    "except OSError:",
-                    "    pass",
+    # def copy_file_to_board(self, local_path: str, remote_path: str):
+    #     # Read and send the file in chunks
+    #     print(f"\r{remote_path}: 0%", end="", flush=True)
+    #     with open(local_path, "rb") as local_file:
+    #         command = [
+    #             "import os",
+    #             "import binascii",
+    #         ]
+    #         if len(os.path.dirname(remote_path)) > 0:
+    #             command += [
+    #                 # ensure the directory exists
+    #                 "try:",
+    #                 f"    os.mkdir('/{os.path.dirname(remote_path)}')",
+    #                 "except OSError:",
+    #                 "    pass",
+    #                 "",
+    #             ]
+    #         command += [
+    #             # open the file for writing
+    #             f"f = open('{remote_path}', 'wb')",
+    #             # define a function to convert base64 to binary and write to file
+    #             "def w(data):",
+    #             "    f.write(binascii.a2b_base64(data))",
+    #             "    f.flush()",
+    #             "",
+    #         ]
+
+    #         self.send_command(command=command)
+
+    #         buffer = local_file.read()
+    #         total_size = len(buffer)
+    #         transferred = 0
+
+    #         # Process the file in chunks
+    #         for i in range(0, len(buffer), FILE_TRANSFER_CHUNK_SIZE):
+    #             chunk = buffer[i : i + FILE_TRANSFER_CHUNK_SIZE]
+    #             # Convert to base64
+    #             base64_str = base64.b64encode(chunk).decode("ascii")
+    #             # Send command to decode base64 and write to file
+    #             self.send_command(f"w('{base64_str}')")
+
+    #             # Update progress on same line
+    #             transferred += len(chunk)
+    #             percent = (transferred / total_size) * 100
+    #             print(f"\r{remote_path}: {percent:.1f}%", end="", flush=True)
+
+    #         # Print newline after completion
+    #         print()
+
+    #     # Close the file on the board
+    #     self.send_command("f.close()")
+
+    def copy_files_to_board(self, path_map: dict[str, str]):
+        def yield_lines(lines):
+            for line in lines:
+                yield line
+
+        def generate_transfer_script(path_map: dict[str, str]):
+            yield yield_lines(
+                [
+                    "import os",
+                    "import binascii",
+                    "def w(data):",
+                    "    global f",
+                    "    f.write(binascii.a2b_base64(data))",
+                    "    f.flush()",
                     "",
                 ]
-            command += [
+            )
+
+            for remote_path, local_path in path_map.items():
+                # For consistency, we always use a leading slash
+                if remote_path[0] != "/":
+                    remote_path = "/" + remote_path
+
+                if "/" in remote_path[1:]:
+                    yield yield_lines(
+                        [
+                            # ensure the directory exists
+                            "try:",
+                            f"    os.mkdir('/{os.path.dirname(remote_path)}')",
+                            "except OSError:",
+                            "    pass",
+                            "",
+                        ]
+                    )
+
                 # open the file for writing
-                f"f = open('{remote_path}', 'wb')",
-                # define a function to convert base64 to binary and write to file
-                "def w(data):",
-                "    f.write(binascii.a2b_base64(data))",
-                "    f.flush()",
-                "",
-            ]
+                yield f"f = open('{remote_path}', 'wb')"
 
-            self.send_command(command=command)
+                with open(local_path, "rb") as local_file:
+                    buffer = local_file.read()
+                    total_size = len(buffer)
+                    transferred = 0
 
-            buffer = local_file.read()
-            total_size = len(buffer)
-            transferred = 0
+                    # Process the file in chunks
+                    for i in range(0, len(buffer), COMMAND_CHUNK_SIZE):
+                        chunk = buffer[i : i + COMMAND_CHUNK_SIZE]
+                        # Convert to base64
+                        base64_str = base64.b64encode(chunk).decode("ascii")
+                        # Send command to decode base64 and write to file
+                        yield f"w('{base64_str}')"
 
-            # Process the file in chunks
-            for i in range(0, len(buffer), chunk_size):
-                chunk = buffer[i : i + chunk_size]
-                # Convert to base64
-                base64_str = base64.b64encode(chunk).decode("ascii")
-                # Send command to decode base64 and write to file
-                self.send_command(f"w('{base64_str}')")
+                        # Update progress on same line
+                        transferred += len(chunk)
+                        percent = (transferred / total_size) * 100
+                        print(f"\r{remote_path}: {percent:.1f}%", end="", flush=True)
 
-                # Update progress on same line
-                transferred += len(chunk)
-                percent = (transferred / total_size) * 100
-                print(f"\r{remote_path}: {percent:.1f}%", end="", flush=True)
+                    # Print newline after completion
+                    print()
 
-            # Print newline after completion
-            print()
+                yield "f.close()"
+                # TODO execute the file if needed
 
-        # Close the file on the board
-        self.send_command("f.close()")
+        # Generate the transfer script
+        transfer_script = generate_transfer_script(path_map)
+
+        # Send Ctrl+C to interrupt any running code
+        self.ctrl_c()
+
+        # Send the script to the board in chunks
+        next_script = []
+        while next_line := next(transfer_script, None) or next_script:
+            if isinstance(next_line, str):
+                if len(next_script) + len(next_line) > COMMAND_CHUNK_SIZE:
+                    self.send_command("\n\r".join(next_script))
+                    next_script = []
+                next_script.append(next_line)
 
     def send_command(self, command: Union[str, list[str]]):
         """
