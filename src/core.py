@@ -58,7 +58,11 @@ def flash_firmware(firmware_path):
     for drive in bootloader_drives:
         print(f"Flashing {os.path.basename(nuke_path)} to {drive}")
         shutil.copy(nuke_path, drive)
-        os.sync()
+        try:
+            os.sync()
+        except Exception:
+            # only available on some platforms
+            pass
 
     # Wait for the drives to start executing uf2s
     def wait_for_flash():
@@ -87,7 +91,11 @@ def flash_firmware(firmware_path):
     for drive in bootloader_drives:
         print(f"Flashing {os.path.basename(firmware_path)} to {drive}")
         shutil.copy(firmware_path, drive)
-        os.sync()
+        try:
+            os.sync()
+        except Exception:
+            # only available on some platforms
+            pass
 
     # Wait for the drives to reappear as Ray devices
     def wait_for_rpi_rp2():
