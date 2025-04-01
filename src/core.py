@@ -172,17 +172,16 @@ def flash_software(software):
     try:
         ports = Ray.find_board_ports()
         print(f"Found {len(ports)} devices to flash software to.")
-        for i, port in enumerate(ports):
-            board = Ray(port)
+        boards = [Ray(port) for port in ports]
+        for i, board in enumerate(boards):
             print(f"Flashing software to {board.port} ({i+1} of {len(ports)})")
             # Copy files to the board
             board.ctrl_c()
             update_files = get_files_from_update_file(software)
             board.write_update_to_board(update_files)
 
-        for port in ports:
-            # restart the board
-            board = Ray(port)
+        # restart the boards
+        for board in boards:
             board.restart_board()
 
         # wait for the boards to reboot
