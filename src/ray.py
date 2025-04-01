@@ -1,4 +1,3 @@
-import base64
 import os
 import time
 from typing import Union
@@ -45,7 +44,7 @@ class Ray:
     def open(self):
         """Open the serial connection"""
         if not hasattr(self, "ser") or not self.ser or not self.ser.is_open:
-            self.ser = serial.Serial(self.port, 115200, timeout=0.1)
+            self.ser = serial.Serial(self.port, 115200, timeout=0.2)
             self.ser.flushInput()
             self.ser.flushOutput()
 
@@ -57,8 +56,8 @@ class Ray:
                 board_ports.append(port_info.device)
         return board_ports
 
-    def copy_files_to_board(self, path_map: dict[str, str]):
-        def generate_transfer_script(path_map: dict[str, str]):
+    def write_update_to_board(self, update_files: list[dict[str, str]]):
+        def generate_transfer_script(update_files: list[dict[str, str]]):
             yield "\n\r".join(
                 [
                     "import os",
@@ -72,17 +71,24 @@ class Ray:
                 ]
             )
 
-            for local_path, remote_path in path_map.items():
-                # For consistency, we always use a leading slash
-                if remote_path[0] != "/":
-                    remote_path = "/" + remote_path
+            for file_info in update_files:
+                filename = file_info["filename"]
+                file_metadata = file_info["metadata"]
+                file_contents = file_info["base64_contents"]
 
-                if "/" in remote_path[1:]:
+                if filename is None or filename == "":
+                    print(**file_info)
+
+                # For consistency, we always use a leading slash
+                if filename[0] != "/":
+                    filename = "/" + filename
+
+                if "/" in filename[1:]:
                     yield "\n\r".join(
                         [
                             # ensure the directory exists
                             "try:",
-                            f"    os.mkdir('/{os.path.dirname(remote_path)}')",
+                            f"    os.mkdir('/{os.path.dirname(filename)}')",
                             "except OSError:",
                             "    pass",
                             "",
@@ -90,34 +96,27 @@ class Ray:
                     )
 
                 # open the file for writing
-                yield f"f = open('{remote_path}', 'wb')"
+                yield f"f = open('{filename}', 'wb')"
 
-                with open(local_path, "rb") as local_file:
-                    buffer = local_file.read()
-                    total_size = len(buffer)
-                    transferred = 0
+                # Process the already base64-encoded file in chunks
+                chunk_size = COMMAND_CHUNK_SIZE - 20  # Ensure it's under the limit
+                for i in range(0, len(file_contents), chunk_size):
+                    percent = (i / len(file_contents)) * 100
+                    print(f"\r{filename}: {percent:.1f}%", end="", flush=True)
+                    chunk = file_contents[i : i + chunk_size]
+                    # Send command to write the base64 data to file
+                    yield f"w('{chunk}')"
 
-                    # Process the file in chunks
-                    for i in range(0, len(buffer), COMMAND_CHUNK_SIZE):
-                        chunk = buffer[i : i + COMMAND_CHUNK_SIZE]
-                        # Convert to base64 (this also ensures we are slightly under the chunk size limit)
-                        base64_str = base64.b64encode(chunk).decode("ascii")
-                        # Send command to decode base64 and write to file
-                        yield f"w('{base64_str}')"
-
-                        # Update progress on same line
-                        transferred += len(chunk)
-                        percent = (transferred / total_size) * 100
-                        print(f"\r{remote_path}: {percent:.1f}%", end="", flush=True)
-
-                    # Print newline after completion
-                    print()
+                print(f"\r{filename}: 100.0%")
 
                 yield "f.close()"
+
                 # TODO execute the file if needed
+                if file_metadata.get("execute", False):
+                    print(f"File would be executed on board: {filename}")
 
         # Generate the transfer script
-        transfer_script = generate_transfer_script(path_map)
+        transfer_script = generate_transfer_script(update_files)
 
         # Send Ctrl+C to interrupt any running code
         self.ctrl_c()
@@ -125,13 +124,7 @@ class Ray:
         # Send the script to the board in chunks
         next_script = []
         next_script_len = 0
-        while next_line := next(transfer_script, None) or next_script:
-            if next_line is None:
-                self.send_command(next_script)
-                next_script = []
-                next_script_len = 0
-                break
-
+        while next_line := next(transfer_script, None):
             if next_script_len + len(next_line) > COMMAND_CHUNK_SIZE:
                 self.send_command(next_script)
                 next_script = [next_line]
@@ -141,6 +134,10 @@ class Ray:
                 next_script.append(next_line)
                 next_script_len += len(next_line)
 
+        # Send any remaining lines
+        if next_script is not None:
+            self.send_command(next_script)
+
     def send_command(self, command: Union[str, list[str]]):
         """
         Send a command to the MicroPython board over the established serial connection and return its output.
@@ -148,7 +145,6 @@ class Ray:
         If a list is provided, it will be joined with newline and carriage return characters.
         """
         if isinstance(command, list):
-            print(f"Sending command: {command}")
             command = "\n\r".join(command)
 
         # Make sure the serial port is open
