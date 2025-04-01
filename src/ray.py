@@ -7,7 +7,7 @@ import serial.tools.list_ports
 
 PICO_VID = 0x2E8A
 PICO_PID = 0x0005
-COMMAND_CHUNK_SIZE = 2048
+COMMAND_CHUNK_SIZE = 10000
 
 
 class Ray:
@@ -44,7 +44,7 @@ class Ray:
     def open(self):
         """Open the serial connection"""
         if not hasattr(self, "ser") or not self.ser or not self.ser.is_open:
-            self.ser = serial.Serial(self.port, 115200, timeout=0.2)
+            self.ser = serial.Serial(self.port, 115200, timeout=0.05)
             self.ser.flushInput()
             self.ser.flushOutput()
 
@@ -68,6 +68,12 @@ class Ray:
                     "    f.write(binascii.a2b_base64(data))",
                     "    f.flush()",
                     "",
+                    "def mdir(path):",
+                    "    try:",
+                    "        os.mkdir(path)",
+                    "    except OSError:",
+                    "        pass",
+                    "",
                 ]
             )
 
@@ -84,16 +90,7 @@ class Ray:
                     filename = "/" + filename
 
                 if "/" in filename[1:]:
-                    yield "\n\r".join(
-                        [
-                            # ensure the directory exists
-                            "try:",
-                            f"    os.mkdir('/{os.path.dirname(filename)}')",
-                            "except OSError:",
-                            "    pass",
-                            "",
-                        ]
-                    )
+                    yield f"mdir('{os.path.dirname(filename)}')"
 
                 # open the file for writing
                 yield f"f = open('{filename}', 'wb')"
