@@ -186,6 +186,16 @@ class Ray:
                 if file_metadata.get("execute", False):
                     yield f"import {os.path.splitext(os.path.basename(filename))[0]}"
 
+        # get current sha256_index
+        current_sha256 = self.sha256_index()
+
+        # filter to list of files with new sha256 hashes
+        update_files = [file_info for file_info in update_files if file_info["sha256"] != current_sha256.get(file_info["filename"], "")]
+
+        if not update_files:
+            print("Files on baord are already up to date.")
+            return
+
         # Generate the script lines in a generator
         script_lines = generate_transfer_script(update_files)
         current_block = []
@@ -208,8 +218,12 @@ class Ray:
             block_script = "\n".join(current_block)
             self.send_command(block_script, ignore_response=True)
 
-        print()
-        print("Upload complete.")
+        if self.validate_files(update_files):
+            print()
+            print("Upload complete.")
+            return
+
+        raise RuntimeError("Upload failed. Files do not match expected SHA256 hashes.")
 
     def enter_bootloader_mode(self):
         """
@@ -291,5 +305,23 @@ class Ray:
         except json.JSONDecodeError as e:
             raise ValueError(f"Board returned invalid JSON for file hashes: {output}") from e
 
+    def validate_files(self, update_files: list[dict[str, str]]) -> bool:
+        """
+        Validate the files on the board against the provided update files.
+        Returns True if all files match, False otherwise.
+        """
+        current_sha256 = self.sha256_index()
 
-# TODO make sure we can gaurentee if we are in raw repl or not since restart_board doesn't work if the board is in a raw repl mode
+        for file_info in update_files:
+            filename = file_info["filename"]
+            sha256 = file_info["sha256"]
+
+            if filename not in current_sha256:
+                print(f"File {filename} not found on board.")
+                return False
+
+            if current_sha256[filename] != sha256:
+                print(f"File {filename} does not match expected SHA256 hash.")
+                return False
+
+        return True
