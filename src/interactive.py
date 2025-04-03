@@ -16,7 +16,11 @@ from src.util import graceful_exit
 
 def display_welcome():
     print("Trenchcoat by Warped Pinball")
-    print("A simple tool to flash MicroPython firmware to Warped Pinball hardware.")
+    print("Use this tool to flash firmware and software to your Warped Pinball devices.")
+    print("If you have any trouble, open an issue on GitHub:")
+    print("https://github.com/warped-pinball/trench-coat/issues")
+    print("Press Ctrl+C to exit at any time.")
+    print()
 
 
 def select_uf2():

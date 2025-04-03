@@ -1,6 +1,5 @@
 import os
 import time
-from typing import Union
 
 import serial
 import serial.tools.list_ports
@@ -44,9 +43,13 @@ class Ray:
     def open(self):
         """Open the serial connection"""
         if not hasattr(self, "ser") or not self.ser or not self.ser.is_open:
-            self.ser = serial.Serial(self.port, 115200, timeout=0.5)
+            self.ser = serial.Serial(self.port, 115200, timeout=0.1)
             self.ser.flushInput()
             self.ser.flushOutput()
+            self.ser.write(b"\x03\x03")  # Ctrl+C
+            time.sleep(0.1)  # Give time for the interrupt to process
+            self.ser.write(b"\x01")
+            time.sleep(0.1)  # Give time for the interrupt to process
 
     @classmethod
     def find_board_ports(cls) -> list[str]:
@@ -56,54 +59,7 @@ class Ray:
                 board_ports.append(port_info.device)
         return board_ports
 
-    def ctrl_c(self):
-        """
-        Send Ctrl+C to the MicroPython board to interrupt any running code.
-        """
-        try:
-            # Sometimes sending it twice helps ensure we fully interrupt
-            self.ser.write(b"\x03\x03")  # Ctrl+C
-            time.sleep(0.5)  # Give time for the interrupt to process
-            # Clear any pending output
-            while self.ser.in_waiting:
-                self.ser.read(self.ser.in_waiting)
-                time.sleep(0.01)
-        except Exception:
-            # we expect this might throw if the board disconnects
-            pass
-
-    def _enter_raw_repl(self):
-        """
-        Enter raw REPL mode by sending Ctrl-A, then wait for '>' prompt.
-        Returns True if raw REPL was successfully entered.
-        """
-        # In case any code was running, interrupt it first
-        self.ctrl_c()
-
-        # Send Ctrl-A to enter raw REPL
-        self.ser.write(b"\x01")  # Ctrl-A
-        time.sleep(0.1)
-
-        # Read until we get a '>' or timeout
-        tstart = time.time()
-        raw_response = b""
-        while (time.time() - tstart) < 2:
-            if self.ser.in_waiting:
-                raw_response += self.ser.read(self.ser.in_waiting)
-                if b">" in raw_response:
-                    return True
-            time.sleep(0.01)
-
-        return False
-
-    def _exit_raw_repl(self):
-        """
-        Exit raw REPL mode by sending Ctrl-B to return to friendly REPL.
-        """
-        self.ser.write(b"\x02")  # Ctrl-B
-        time.sleep(0.1)
-
-    def send_command_raw(self, script: str) -> str:
+    def send_command(self, script, ignore_response=False) -> str:
         """
         Send a script to the MicroPython board in *raw REPL mode*,
         capture and return stdout (combined into one string),
@@ -113,22 +69,21 @@ class Ray:
         spaced / indented as needed. We'll send it as-is in raw mode.
         """
         # Make sure the serial port is open
-        if not hasattr(self, "ser") or not self.ser or not self.ser.is_open:
-            self.open()
+        self.open()
 
-        # 1) Enter raw REPL
-        if not self._enter_raw_repl():
-            raise RuntimeError("Unable to enter raw REPL")
+        if isinstance(script, list):
+            script = "\n".join(script)
 
-        # 2) Send the script
-        # Ensure it ends with a newline so it executes
         if not script.endswith("\n"):
-            script += "\n"
+            script += "\n"  # Ensure it ends with a newline
+
         self.ser.write(script.encode("utf-8"))
 
         # 3) Send Ctrl-D to indicate we're done and want to execute
         self.ser.write(b"\x04")
-        time.sleep(0.1)
+
+        if ignore_response:
+            return
 
         # 4) Read the output from the board until we get a Ctrl-D (0x04)
         #    This is the normal output
@@ -137,9 +92,6 @@ class Ray:
         # 5) Next, read until another Ctrl-D (or until timeout) for error text
         #    If there's no error, this might be empty or just come immediately
         error_output = self._read_until_marker(marker=b"\x04", timeout=2.0)
-
-        # 6) (Optional) exit raw REPL so we can return to normal usage
-        self._exit_raw_repl()
 
         # Remove trailing \x04 if any
         if normal_output.endswith(b"\x04"):
@@ -174,17 +126,6 @@ class Ray:
             else:
                 time.sleep(0.01)
         return buf
-
-    def send_command(self, command: Union[str, list[str]]) -> str:
-        """
-        Wrapper for send_command_raw using raw REPL.
-        Accepts either a string or list of strings for multi-line commands.
-        Joins list with newlines if needed. Returns the board's stdout as string.
-        Raises RuntimeError if there's an error on the board side.
-        """
-        if isinstance(command, list):
-            command = "\n".join(command)
-        return self.send_command_raw(command)
 
     def write_update_to_board(self, update_files: list[dict[str, str]]):
         """
@@ -250,12 +191,12 @@ class Ray:
         current_block = []
         current_len = 0
 
-        # We'll keep sending them in smaller blocks, each executed in raw mode
+        # Iterate over the script lines and send them in chunks
         for i, line in enumerate(script_lines):
             if current_len + len(line) > COMMAND_CHUNK_SIZE:
                 # send the block
                 block_script = "\n".join(current_block)
-                self.send_command(block_script)
+                self.send_command(block_script, ignore_response=True)
                 current_block = [line]
                 current_len = len(line)
             else:
@@ -265,17 +206,16 @@ class Ray:
         # Send any remainder
         if current_block:
             block_script = "\n".join(current_block)
-            self.send_command(block_script)
+            self.send_command(block_script, ignore_response=True)
+
+        print()
+        print("Upload complete.")
 
     def enter_bootloader_mode(self):
         """
         Reset the board into the UF2 bootloader (might need physically to reset on some boards).
         """
-        try:
-            self.ctrl_c()
-            self.send_command_raw("import machine\nmachine.bootloader()")
-        except Exception:
-            pass  # the board will disconnect, so an error is expected
+        self.send_command("import machine\nmachine.bootloader()", ignore_response=True)
 
     def wipe_board(self):
         """
@@ -301,11 +241,7 @@ class Ray:
         Soft reset the board. This causes a reboot, so the serial connection might
         disconnect or the REPL might get re-initialized.
         """
-        try:
-            self.ctrl_c()
-            self.send_command_raw("import machine\nmachine.reset()")
-        except Exception:
-            pass
+        self.send_command("import machine\nmachine.reset()", ignore_response=True)
 
     def sha256_index(self) -> dict[str, str]:
         """

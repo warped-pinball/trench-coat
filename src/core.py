@@ -176,7 +176,6 @@ def flash_software(software):
         for i, board in enumerate(boards):
             print(f"Flashing software to {board.port} ({i+1} of {len(ports)})")
             # Copy files to the board
-            board.ctrl_c()
             update_files = get_files_from_update_file(software)
             board.write_update_to_board(update_files)
 
