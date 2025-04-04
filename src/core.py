@@ -83,7 +83,7 @@ def flash_firmware(firmware_path):
 
     # Get the final list of bootloader drives once they're all accounted for
     # (They could have changed paths)
-    if len(bootloader_drives) == list_rpi_rp2_drives():
+    if len(bootloader_drives) == len(list_rpi_rp2_drives()):
         bootloader_drives = list_rpi_rp2_drives()
 
     # give the drives a moment to settle
