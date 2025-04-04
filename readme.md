@@ -54,3 +54,14 @@ pyinstaller --onefile --name TrenchCoat --add-data "uf2:uf2" src/main.py
 # Run the application
 ./dist/TrenchCoat
 ```
+
+## Contributors
+
+<a href="https://github.com/warped-pinball/trench-coat/graphs/contributors" alt="Contributors">
+  <img src="https://contrib.rocks/image?repo=warped-pinball/trench-coat" />
+</a>
+
+
+## License
+
+This project is licensed under the CC BY-NC License. See the [LICENSE](LICENSE) file for details.
