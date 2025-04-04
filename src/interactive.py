@@ -151,9 +151,12 @@ def select_software():
     selected_release = release_map[selected_choice]
 
     # Find the update.json asset and its download URL
-    update_json_asset = next(asset for asset in selected_release["assets"] if asset["name"] == "update.json")
-    download_url = update_json_asset["browser_download_url"]
-
+    try:
+        update_json_asset = next(asset for asset in selected_release["assets"] if asset["name"] == "update.json")
+        download_url = update_json_asset["browser_download_url"]
+    except StopIteration:
+        print("Error: No 'update.json' asset found in the selected release.")
+        graceful_exit(now=True)
     # Download the update.json file to a temporary location
     temp_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
     temp_file.close()
