@@ -12,9 +12,12 @@ atexit.register(Ray.close_all)
 
 # Set up signal handler for Ctrl+C
 def signal_handler(sig, frame):
-    print("\nCtrl+C pressed. Cleaning up...")
+    # Avoid print statements in signal handlers
     Ray.close_all()
-    graceful_exit(now=True)
+    # Use sys.exit to terminate immediately
+    import sys
+
+    sys.exit(0)
 
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -25,12 +28,7 @@ def wait_for_devices():
         print("Listening for devices (press ctrl + c to exit)", end="")
         return len(Ray.find_board_ports() + list_rpi_rp2_drives())
 
-    try:
-        wait_for(firmware_listen_func, timeout=None)
-    except KeyboardInterrupt:
-        print("\nExiting...")
-        graceful_exit(now=True)
-
+    wait_for(firmware_listen_func, timeout=None)
     return len(Ray.find_board_ports() + list_rpi_rp2_drives())
 
 
@@ -40,11 +38,7 @@ def wait_for_disconnect():
         print("Flash complete, disconnect all boards before flashing more", end="")
         return len(Ray.find_board_ports() + list_rpi_rp2_drives()) == 0
 
-    try:
-        wait_for(discconnect_listen_func, timeout=None)
-    except KeyboardInterrupt:
-        print("\nExiting...")
-        graceful_exit(now=True)
+    wait_for(discconnect_listen_func, timeout=None)
 
 
 def main():
