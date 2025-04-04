@@ -12,24 +12,23 @@ A simple tool by Warped Pinball for flashing MicroPython firmware to Warped Pinb
 > [!IMPORTANT]
 > Turn off your pinball machine before flashing firmware. You do not need to uninstall your vector board to flash firmware.
 
-### Windows
+1. Download the latest version of trench coat for your operating system [here](https://github.com/warped-pinball/trench-coat/releases/latest)
+2. Connect your Warped Pinball hardware to your computer using a USB cable.
+3. Run trench-coat:
+    - **Windows**: double click on `trench-coat.exe`. If you get a warning that the file is unrecognized, click "More info" and then "Run anyway".
+    - **Linux & MacOS**: open a terminal and follow these steps:
+        ```bash
+        # Change to the directory where you downloaded the file
+        cd ~/Downloads
 
-1. Open the latest release of TrenchCoat.
-2. Download TrenchCoat.exe from the attachments
-3. Open the Zip file and run the TrenchCoat.exe file.
-4. Windows will probably warn you that the file is unrecognized. Click "More info" and then "Run anyway".
-5. Connect your Warped Pinball hardware to your computer using a USB cable.
-6. Follow the on-screen prompts to flash the firmware to your device.
+        # Make the file executable
+        chmod +x ./TrenchCoat
 
-### Linux & MacOS
+        # Run the file
+        ./TrenchCoat
+        ```
+4. Follow the on-screen prompts to flash the firmware to your device.
 
-1. Open the latest release of TrenchCoat.
-2. Download TrenchCoat.zip from the attachments
-3. Open the Zip file and extract the contents.
-4. Open a terminal and navigate to the extracted folder.
-5. Connect your Warped Pinball hardware to your computer using a USB cable.
-6. Run trench-coat by executing the following command: `./trench-coat`
-7. Follow the on-screen prompts to flash the firmware to your device.
 
 ## Developing locally
 To develop locally, you need to set up a Python virtual environment and install the required dependencies. Follow these steps:
