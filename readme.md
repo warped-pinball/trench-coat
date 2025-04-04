@@ -55,7 +55,7 @@ pyinstaller --onefile --name TrenchCoat --add-data "uf2:uf2" src/main.py
 ./dist/TrenchCoat
 ```
 
-### Contributors
+## Contributors
 
 <a href="https://github.com/warped-pinball/trench-coat/graphs/contributors" alt="Contributors">
   <img src="https://contrib.rocks/image?repo=warped-pinball/" />
