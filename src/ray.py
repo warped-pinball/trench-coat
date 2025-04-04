@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import json
 import os
 import time
 
@@ -79,6 +80,12 @@ class Ray:
         if not script.endswith("\n"):
             script += "\n"  # Ensure it ends with a newline
 
+        if not ignore_response:
+            # flush the output buffer
+            self.ser.flushOutput()
+            # flush the input buffer
+            self.ser.flushInput()
+
         self.ser.write(script.encode("utf-8"))
 
         # 3) Send Ctrl-D to indicate we're done and want to execute
@@ -87,46 +94,35 @@ class Ray:
         if ignore_response:
             return
 
-        # 4) Read the output from the board until we get a Ctrl-D (0x04)
-        #    This is the normal output
-        normal_output = self._read_until_marker(marker=b"\x04", timeout=2.0)
-
-        # 5) Next, read until another Ctrl-D (or until timeout) for error text
-        #    If there's no error, this might be empty or just come immediately
-        error_output = self._read_until_marker(marker=b"\x04", timeout=2.0)
-
-        # Remove trailing \x04 if any
-        if normal_output.endswith(b"\x04"):
-            normal_output = normal_output[:-1]
-        if error_output.endswith(b"\x04"):
-            error_output = error_output[:-1]
-
-        # Convert from bytes to str
-        normal_str = normal_output.decode("utf-8", errors="replace")
-        error_str = error_output.decode("utf-8", errors="replace")
-
-        # If there's anything in error_str, that typically means an exception
-        # was thrown. You can handle it how you like; we'll just raise here.
-        if error_str.strip():
-            raise RuntimeError(f"Error from board:\n{error_str.strip()}")
-
-        return normal_str.strip()
-
-    def _read_until_marker(self, marker: bytes, timeout: float) -> bytes:
-        """
-        Read from self.ser until we find 'marker' or until 'timeout' has passed.
-        Return all bytes read (including the marker).
-        """
-        tstart = time.time()
+        # read in the initial "OK" response
         buf = b""
-        while (time.time() - tstart) < timeout:
+        while True:
+            if self.ser.in_waiting > 0:
+                chunk = self.ser.read(self.ser.in_waiting)
+                if b"OK" in chunk:
+                    # add anything after the OK to the buffer
+                    buf += chunk[chunk.index(b"OK") + 2 :]
+                    break
+            time.sleep(0.01)
+
+        # wait until we have data in the input buffer
+        while self.ser.in_waiting == 0:
+            time.sleep(0.01)
+
+        # read all until it's been idle for 1 second
+        start_time = time.time()
+        while True:
             if self.ser.in_waiting > 0:
                 chunk = self.ser.read(self.ser.in_waiting)
                 buf += chunk
-                if marker in buf:
-                    return buf
+                start_time = time.time()
             else:
-                time.sleep(0.01)
+                if time.time() - start_time > 1.0:
+                    break
+            time.sleep(0.01)
+
+        # encode and return the output
+        buf = buf.decode("utf-8", errors="replace")
         return buf
 
     def write_update_to_board(self, update_files: list[dict[str, str]]):
@@ -140,11 +136,28 @@ class Ray:
             setup_lines = [
                 "import os",
                 "import binascii",
+                "import hashlib",
                 "f = None",
+                "hash_checks = []",
                 "def w(data):",
                 "    global f",
                 "    f.write(binascii.a2b_base64(data))",
                 "    f.flush()",
+                "",
+                "def hash_check(path, expected_hash):",
+                "    try:",
+                "        sha256 = hashlib.sha256()",
+                "        with open(path, 'rb') as f:",
+                "            while True:",
+                "                chunk = f.read(1024)",
+                "                if not chunk:",
+                "                    break",
+                "                sha256.update(chunk)",
+                "        hash = binascii.hexlify(sha256.digest()).decode('utf-8')",
+                "    except Exception:",
+                "        hash = ''",
+                "    global hash_checks",
+                "    hash_checks.append((path, hash == expected_hash))",
                 "",
                 "def mdir(path):",
                 "    try:",
@@ -199,6 +212,13 @@ class Ray:
 
                 yield "f.close()"
 
+                # calculate the checksum based on the file contents
+                hasher = hashlib.sha256()
+                decoded_contents = base64.b64decode(file_contents)
+                hasher.update(decoded_contents)
+                expected_hash = hasher.hexdigest()
+
+                yield f"hash_check('{filename}', '{expected_hash}')"
                 # If the file is marked as executable, run it
                 if file_metadata.get("execute", False):
                     yield f"execute_file('{filename}')"
@@ -229,7 +249,22 @@ class Ray:
             self.send_command(block_script, ignore_response=True)
 
         print()
-        print("Upload complete.")
+
+        output = self.send_command("print([check for check in hash_checks if not check[1]])", ignore_response=False)
+
+        # find first [
+        start = output.find("[")
+        # find last ]
+        end = output.rfind("]")
+        if start == -1 or end == -1:
+            raise ValueError(f"Board failed to return hash checks: {output}")
+        # remove anything before first [ or after last ]
+        output = output[start : end + 1].strip()
+        if output == "[]":
+            print("All files uploaded successfully.")
+            return
+
+        raise ValueError(f"Board failed to upload files: {output}")
 
     def enter_bootloader_mode(self):
         """
@@ -312,13 +347,14 @@ class Ray:
         start = output.find("{")
         end = output.rfind("}")
         if start == -1 or end == -1:
-            raise ValueError("Board returned invalid JSON for file hashes")
+            raise ValueError(f"Board returned invalid JSON for file hashes: {output}")
 
-        output = output[start : end + 1]
+        output = output[start : end + 1].strip()
+
+        if len(output) == 0:
+            return {}
 
         try:
-            import json
-
             return json.loads(output)
         except json.JSONDecodeError as e:
             raise ValueError(f"Board returned invalid JSON for file hashes: {output}") from e
