@@ -70,6 +70,8 @@ jobs:
     name: Upload Release Assets
     needs: [build_linux, build_windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required to upload assets to a release
     if: github.event_name == 'release'
     steps:
       - name: Download all artifacts
@@ -78,7 +80,7 @@ jobs:
           path: artifacts
 
       - name: Upload assets to release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             ./artifacts/TrenchCoat-linux/TrenchCoat
