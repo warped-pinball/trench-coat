@@ -47,10 +47,11 @@ def flash_firmware(firmware_path):
     bootloader_drives = list_rpi_rp2_drives()
 
     # wipe the board with nuke.uf2
-    nuke_path = [path for path in list_bundled_uf2() if "nuke.uf2" in path][0]
-    if len(nuke_path) == 0:
+    nuke_path = [path for path in list_bundled_uf2() if "nuke.uf2" in path]
+    if not nuke_path:
         print("Error: nuke.uf2 not found in bundled UF2 files.")
         graceful_exit()
+    nuke_path = nuke_path[0]
 
     # give the drives a moment to settle
     time.sleep(5)
