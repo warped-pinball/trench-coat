@@ -1,7 +1,7 @@
-*.pyc
-*.code-workspace
-*.exp
-*.sh
-*.toml
-PICO_CODE
+.venv/**
+**.spec
 
+build/**
+dist/**
+**/*.pyc
+extracted_software_files/**
