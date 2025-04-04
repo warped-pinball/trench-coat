@@ -156,10 +156,16 @@ class Ray:
                 "    module_path = path.replace('/', '.').replace('.py', '')",
                 "    if module_path.startswith('.'):",
                 "        module_path = module_path[1:]",
-                "    imported_module = __import__(module_path)",
-                "    if hasattr(imported_module, 'main'):",
-                "        imported_module.main()",
-                "    os.remove(path)",
+                "    try:",
+                "        imported_module = __import__(module_path)",
+                "        if hasattr(imported_module, 'main'):",
+                "            imported_module.main()",
+                "    except Exception as e:",
+                "        print('Error message:', str(e))",
+                "        print('Error executing file:', path)",
+                "    try:" "        os.remove(path)",
+                "    except OSError:",
+                "        pass",  # file probably removed itself
             ]
 
             yield "\n".join(setup_lines)
@@ -195,7 +201,7 @@ class Ray:
 
                 # If the file is marked as executable, run it
                 if file_metadata.get("execute", False):
-                    yield f"execute_file('{os.path.splitext(os.path.basename(filename))[0]}')"
+                    yield f"execute_file('{filename}')"
 
         # figure out what files need to be updated
         required_files = self.get_files_to_update(update_files)
