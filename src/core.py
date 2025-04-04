@@ -1,4 +1,3 @@
-import hashlib
 import json
 import os
 import shutil
@@ -213,19 +212,7 @@ def get_files_from_update_file(update_file):
                 # This is probably the last line in the file, which is the signature
                 continue
 
-            # calculate the sha256 hash of the contents
-            hasher = hashlib.sha256()
-            hasher.update(contents.encode())
-            sha256 = hasher.hexdigest()
-
-            files.append(
-                {
-                    "filename": filename,
-                    "metadata": json.loads("{" + metadata + "}"),
-                    "base64_contents": contents.strip(),
-                    "sha256": sha256,
-                }
-            )
+            files.append({"filename": filename, "metadata": json.loads("{" + metadata + "}"), "base64_contents": contents.strip()})
 
     return files
 
