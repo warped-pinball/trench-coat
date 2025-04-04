@@ -4,6 +4,8 @@ on:
   pull_request:
     branches:
       - main
+  release:
+    types: [created]
 
 jobs:
   build_linux:
@@ -63,3 +65,21 @@ jobs:
           name: TrenchCoat-windows
           path: dist/TrenchCoat.exe
           if-no-files-found: error
+
+  upload_release_assets:
+    name: Upload Release Assets
+    needs: [build_linux, build_windows]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Upload assets to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ./artifacts/TrenchCoat-linux/TrenchCoat
+            ./artifacts/TrenchCoat-windows/TrenchCoat.exe
