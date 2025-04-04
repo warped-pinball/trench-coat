@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import os
 import time
 
@@ -150,7 +152,16 @@ class Ray:
                 "    except OSError:",
                 "        pass",
                 "",
+                "def execute_file(path):",
+                "    module_path = path.replace('/', '.').replace('.py', '')",
+                "    if module_path.startswith('.'):",
+                "        module_path = module_path[1:]",
+                "    imported_module = __import__(module_path)",
+                "    if hasattr(imported_module, 'main'):",
+                "        imported_module.main()",
+                "    os.remove(path)",
             ]
+
             yield "\n".join(setup_lines)
 
             for i, file_info in enumerate(files):
@@ -182,12 +193,15 @@ class Ray:
 
                 yield "f.close()"
 
-                # For demonstration if we want to auto-execute
+                # If the file is marked as executable, run it
                 if file_metadata.get("execute", False):
-                    yield f"import {os.path.splitext(os.path.basename(filename))[0]}"
+                    yield f"execute_file('{os.path.splitext(os.path.basename(filename))[0]}')"
+
+        # figure out what files need to be updated
+        required_files = self.get_files_to_update(update_files)
 
         # Generate the script lines in a generator
-        script_lines = generate_transfer_script(update_files)
+        script_lines = generate_transfer_script([file_info for file_info in update_files if file_info["filename"] in required_files or file_info["metadata"].get("execute", False)])
         current_block = []
         current_len = 0
 
@@ -247,6 +261,7 @@ class Ray:
         """
         Get the SHA256 of every file on the board as a dict.
         We run code that collects file : digest in JSON, then parse locally.
+        Recursively walks through all directories.
         """
         script_lines = [
             "import os",
@@ -255,22 +270,33 @@ class Ray:
             "import binascii",
             "",
             "files = {}",
-            "for entry in os.listdir('/'):",
-            "    path = '/' + entry",
+            "",
+            "def process_directory(path):",
             "    try:",
-            "        # Skip directories",
-            "        if os.stat(path)[0] & 0x4000:",
-            "            continue",
-            "        sha256 = hashlib.sha256()",
-            "        with open(path, 'rb') as f:",
-            "            while True:",
-            "                chunk = f.read(1024)",
-            "                if not chunk:",
-            "                    break",
-            "                sha256.update(chunk)",
-            "        files[path] = binascii.hexlify(sha256.digest()).decode('utf-8')",
+            "        for entry in os.listdir(path):",
+            "            full_path = path + '/' + entry if path != '/' else '/' + entry",
+            "            try:",
+            "                # Check if entry is a directory",
+            "                is_dir = os.stat(full_path)[0] & 0x4000",
+            "                if is_dir:",
+            "                    process_directory(full_path)  # Recurse into directory",
+            "                else:",
+            "                    # Calculate hash for file",
+            "                    sha256 = hashlib.sha256()",
+            "                    with open(full_path, 'rb') as f:",
+            "                        while True:",
+            "                            chunk = f.read(1024)",
+            "                            if not chunk:",
+            "                                break",
+            "                            sha256.update(chunk)",
+            "                    files[full_path] = binascii.hexlify(sha256.digest()).decode('utf-8')",
+            "            except Exception as e:",
+            "                files[full_path] = f'Error: {str(e)}'",
             "    except Exception as e:",
-            "        files[path] = f'Error: {str(e)}'",
+            "        files[path] = f'Error listing directory: {str(e)}'",
+            "",
+            "# Start recursive processing from root",
+            "process_directory('/')",
             "",
             "print(json.dumps(files))",
         ]
@@ -291,5 +317,37 @@ class Ray:
         except json.JSONDecodeError as e:
             raise ValueError(f"Board returned invalid JSON for file hashes: {output}") from e
 
+    def get_files_to_update(self, expected_files: list[dict[str, str]]) -> list[str]:
+        required_files = []
 
-# TODO make sure we can gaurentee if we are in raw repl or not since restart_board doesn't work if the board is in a raw repl mode
+        expected_sha256_index = {}
+        for file_info in expected_files:
+            # add / to the start of the filename if it doesn't exist
+            if not file_info["filename"].startswith("/"):
+                file_info["filename"] = "/" + file_info["filename"]
+
+            hasher = hashlib.sha256()
+            # decode the base64 contents to bytes
+            decoded_contents = base64.b64decode(file_info["base64_contents"])
+            hasher.update(decoded_contents)
+            if file_info["filename"] in expected_sha256_index:
+                # If the file already exists, check if the hashes match
+                # This could happen for files that the update modifies or
+                # if a filename gets reused by executeable files
+                if expected_sha256_index[file_info["filename"]] != hasher.hexdigest():
+                    required_files.append(file_info["filename"])
+                    # remove the file from the expected list, we don't need to check this again
+                    del expected_sha256_index[file_info["filename"]]
+            else:
+                expected_sha256_index[file_info["filename"]] = hasher.hexdigest()
+
+        # Get the SHA256 index from the board
+        sha256_index = self.sha256_index()
+
+        for file in expected_sha256_index.keys():
+            if file not in sha256_index:
+                required_files.append(file)
+            elif sha256_index[file] != expected_sha256_index[file]:
+                required_files.append(file)
+
+        return required_files
