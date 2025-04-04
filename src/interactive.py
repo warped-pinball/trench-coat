@@ -130,10 +130,12 @@ def select_software():
     choices = []
     release_map = {}  # Map formatted choice to original release
 
-    for release in filtered_releases:
+    for i, release in enumerate(filtered_releases):
         name = release["name"] or release["tag_name"]
         published_date = datetime.strptime(release["published_at"], "%Y-%m-%dT%H:%M:%SZ")
         formatted_date = published_date.strftime("%Y-%m-%d")
+        if i == 0:
+            name += " (Recommended)"
         choice_text = f"{name} ({formatted_date})"
         choices.append(choice_text)
         release_map[choice_text] = release
