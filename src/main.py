@@ -1,6 +1,7 @@
 import argparse
 import atexit
 import signal
+import time
 import traceback
 
 from src.core import flash_firmware, flash_software, list_rpi_rp2_drives
@@ -113,7 +114,7 @@ def main():
 
     if args.listen_after:
         while not (ports := Ray.find_board_ports()):
-            pass
+            time.sleep(0.01)
         port = ports[0]
         board = Ray(port)
         print("Listening for device output (press ctrl + c to exit)")
