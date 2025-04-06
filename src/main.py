@@ -56,11 +56,11 @@ def wait_for_one_or_more_devices():
 
 def wait_for_zero_devices():
     # wait until all devices disconnect
-    def discconnect_listen_func():
+    def disconnect_listen_func():
         print("Flash complete, disconnect all boards before flashing more", end="")
         return len(Ray.find_board_ports() + list_rpi_rp2_drives()) == 0
 
-    wait_for(discconnect_listen_func, timeout=None)
+    wait_for(disconnect_listen_func, timeout=None)
 
 
 def wait_for_n_devices(n):
