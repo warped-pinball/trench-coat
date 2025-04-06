@@ -1,9 +1,11 @@
 import argparse
 import atexit
 import signal
+import sys
 import time
 import traceback
 
+from src import __version__
 from src.core import flash_firmware, flash_software, list_rpi_rp2_drives
 from src.interactive import display_welcome, select_software, select_uf2
 from src.ray import Ray
@@ -14,7 +16,7 @@ atexit.register(Ray.close_all)
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Flash firmware and software to devices")
-    parser.add_argument("--version", action="version", version="%(prog)s 1.0.3")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--firmware", help="Path to firmware UF2 file")
     parser.add_argument("--software", help="Path to software file")
     parser.add_argument("--skip-firmware", action="store_true", help="Skip firmware flashing")
@@ -39,8 +41,6 @@ def signal_handler(sig, frame):
     # Avoid print statements in signal handlers
     Ray.close_all()
     # Use sys.exit to terminate immediately
-    import sys
-
     sys.exit(0)
 
 

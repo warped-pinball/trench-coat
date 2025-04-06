@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wptc"
+description = "A simple tool by Warped Pinball for flashing MicroPython firmware to Warped Pinball hardware."
+readme = "README.md"
+authors = [
+    {name = "Warped Pinball", email = "mullinmax@gmail.com"}
+]
+license = {text = "CC BY-NC 4.0"}
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: CC BY-NC 4.0 License",
+    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Embedded Systems"
+]
+dependencies = [
+    "pyserial==3.5",
+    "simple-term-menu==1.6.6",
+    "InquirerPy==0.3.3",
+    "requests==2.32.3",
+    "rsa==4.9"
+]
+dynamic = ["version"]
+
+[tool.setuptools.dynamic]
+version = {attr = "src.__version__"}
+
+[project.scripts]
+trenchcoat = "src.main:main"
+
+[project.urls]
+"Homepage" = "https://github.com/warped-pinball/trench-coat"
+"Bug Tracker" = "https://github.com/warped-pinball/trench-coat/issues"

@@ -6,6 +6,8 @@ import sys
 import tempfile
 import time
 
+import pkg_resources
+
 from src.ray import Ray
 from src.util import graceful_exit, wait_for
 
@@ -121,10 +123,19 @@ def flash_firmware(firmware_path):
 
 def list_bundled_uf2():
     """List available bundled UF2 files"""
+
     if hasattr(sys, "_MEIPASS"):
         uf2_dir = os.path.join(sys._MEIPASS, "uf2")
     else:
-        uf2_dir = os.path.join(os.path.dirname(__file__), "uf2")
+        try:
+            # Try to get the installed package path first
+            uf2_dir = pkg_resources.resource_filename("src", "uf2")
+            if not os.path.isdir(uf2_dir):
+                # Fall back to development path
+                uf2_dir = os.path.join(os.path.dirname(__file__), "uf2")
+        except (ImportError, ModuleNotFoundError):
+            # Fall back to development path
+            uf2_dir = os.path.join(os.path.dirname(__file__), "uf2")
 
     if not os.path.isdir(uf2_dir):
         return []
