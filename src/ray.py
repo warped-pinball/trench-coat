@@ -20,7 +20,6 @@ class Ray:
         Ray._instances.add(self)
 
         self.port = port
-        self.open()
 
     def __del__(self):
         # Clean up when the instance is garbage-collected
@@ -43,16 +42,17 @@ class Ray:
         for ray in list(cls._instances):
             ray.close()
 
-    def open(self):
+    def open(self, raw_repl: bool = True):
         """Open the serial connection"""
         if not hasattr(self, "ser") or not self.ser or not self.ser.is_open:
             self.ser = serial.Serial(self.port, 115200, timeout=0.1)
             self.ser.flushInput()
             self.ser.flushOutput()
-            self.ser.write(b"\x03\x03")  # Ctrl+C
-            time.sleep(0.1)  # Give time for the interrupt to process
-            self.ser.write(b"\x01")
-            time.sleep(0.1)  # Give time for the interrupt to process
+            if raw_repl:
+                self.ser.write(b"\x03\x03")  # Ctrl+C
+                time.sleep(0.1)  # Give time for the interrupt to process
+                self.ser.write(b"\x01")
+                time.sleep(0.1)  # Give time for the interrupt to process
 
     @classmethod
     def find_board_ports(cls) -> list[str]:
@@ -393,3 +393,15 @@ class Ray:
                 required_files.append(file)
 
         return required_files
+
+    def listen(self):
+        """
+        Listen for incoming messages from the board.
+        This is a blocking call that will run until the connection is closed.
+        """
+        self.open(raw_repl=False)
+        while True:
+            if self.ser.in_waiting > 0:
+                chunk = self.ser.read(self.ser.in_waiting)
+                print(chunk.decode("utf-8", errors="replace"), end="")
+            time.sleep(0.01)

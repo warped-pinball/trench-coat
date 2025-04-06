@@ -18,12 +18,17 @@ def parse_arguments():
     parser.add_argument("--software", help="Path to software file")
     parser.add_argument("--skip-firmware", action="store_true", help="Skip firmware flashing")
     parser.add_argument("--once", action="store_true", help="Flash only once and exit")
+    parser.add_argument("--listen-after", action="store_true", help="Show device output after flashing and rebooting")
 
     args = parser.parse_args()
 
     # Check for incompatible options
     if args.firmware and args.skip_firmware:
         parser.error("--firmware and --skip-firmware cannot be used together")
+
+    # if listen-after is set, set once to true
+    if args.listen_after:
+        args.once = True
 
     return args
 
@@ -105,6 +110,17 @@ def main():
 
         # wait until all devices disconnect
         wait_for_zero_devices()
+
+    if args.listen_after:
+        while not (ports := Ray.find_board_ports()):
+            pass
+        port = ports[0]
+        board = Ray(port)
+        print("Listening for device output (press ctrl + c to exit)")
+        print("")
+        print("")
+        board.listen()
+        board.close()
 
 
 if __name__ == "__main__":
