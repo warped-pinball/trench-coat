@@ -25,7 +25,7 @@ jobs:
           pip install -r requirements.txt
           rm -rf dist build
           pyinstaller --onefile \
-            --name TrenchCoat \
+            --name TrenchCoat-linux \
             --hidden-import mpremote \
             --add-data "uf2:uf2" \
             src/main.py
@@ -37,7 +37,39 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: TrenchCoat-linux
-          path: dist/TrenchCoat
+          path: dist/TrenchCoat-linux
+          if-no-files-found: error
+
+  build_macos:
+    name: Build on macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          rm -rf dist build
+          pyinstaller --onefile \
+            --name TrenchCoat-macos \
+            --hidden-import mpremote \
+            --add-data "uf2:uf2" \
+            src/main.py
+
+      - name: List dist folder
+        run: ls -la dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrenchCoat-macos
+          path: dist/TrenchCoat-macos
           if-no-files-found: error
 
   build_windows:
@@ -57,18 +89,18 @@ jobs:
           pip install -r requirements.txt
           if (Test-Path dist) { Remove-Item dist -Recurse -Force }
           if (Test-Path build) { Remove-Item build -Recurse -Force }
-          pyinstaller --onefile --name TrenchCoat --hidden-import mpremote --add-data "uf2;uf2" src/main.py
+          pyinstaller --onefile --name TrenchCoat-windows --hidden-import mpremote --add-data "uf2;uf2" src/main.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: TrenchCoat-windows
-          path: dist/TrenchCoat.exe
+          path: dist/TrenchCoat-windows.exe
           if-no-files-found: error
 
   upload_release_assets:
     name: Upload Release Assets
-    needs: [build_linux, build_windows]
+    needs: [build_linux, build_macos, build_windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write  # Required to upload assets to a release
@@ -83,5 +115,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ./artifacts/TrenchCoat-linux/TrenchCoat
-            ./artifacts/TrenchCoat-windows/TrenchCoat.exe
+            ./artifacts/TrenchCoat-linux/TrenchCoat-linux
+            ./artifacts/TrenchCoat-macos/TrenchCoat-macos
+            ./artifacts/TrenchCoat-windows/TrenchCoat-windows.exe
