@@ -29,6 +29,9 @@ A simple tool by Warped Pinball for flashing MicroPython firmware to Warped Pinb
         ```
 4. Follow the on-screen prompts to flash the firmware to your device.
 
+## Package Information
+
+This codebase is also available as a [Python package](https://pypi.org/project/wptc/). You can install it using pip: `pip install wptc`. This is mainly useful for building the [Vector Codebase](https://github.com/warped-pinball/vector)
 
 ## Developing locally
 To develop locally, you need to set up a Python virtual environment and install the required dependencies. Follow these steps:
