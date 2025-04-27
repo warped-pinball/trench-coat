@@ -22,7 +22,7 @@ jobs:
             add-data: "uf2;uf2"
             ext: ".exe"
           - os: macos-13
-            name: macos-x64
+            name: macos-x86_64
             add-data: "uf2:uf2"
             ext: ""
           - os: macos-15
@@ -89,6 +89,6 @@ jobs:
         with:
           files: |
             artifacts/TrenchCoat-linux/TrenchCoat-linux
-            artifacts/TrenchCoat-macos-x64/TrenchCoat-macos-x64
+            artifacts/TrenchCoat-macos-x86_64/TrenchCoat-macos-x86_64
             artifacts/TrenchCoat-macos-arm64/TrenchCoat-macos-arm64
             artifacts/TrenchCoat-windows/TrenchCoat-windows.exe
