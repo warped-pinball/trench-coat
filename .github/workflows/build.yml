@@ -21,7 +21,7 @@ jobs:
             name: windows
             add-data: "uf2;uf2"
             ext: ".exe"
-          - os: macos-15-large
+          - os: macos-13
             name: macos-x64
             add-data: "uf2:uf2"
             ext: ""
