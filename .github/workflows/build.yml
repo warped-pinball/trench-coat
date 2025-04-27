@@ -55,6 +55,7 @@ jobs:
         run: rm -rf dist build
 
       - name: Package with PyInstaller
+        shell: bash
         run: |
           pyinstaller --onefile \
             --name TrenchCoat-${{ matrix.name }} \
