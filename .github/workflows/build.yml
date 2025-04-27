@@ -1,120 +1,94 @@
-name: Build and Package
+name: Build Binaries
 
 on:
   pull_request:
-    branches:
-      - main
+    branches: [main]
   release:
     types: [created]
 
 jobs:
-  build_linux:
-    name: Build on Ubuntu
-    runs-on: ubuntu-20.04
+  build:
+    name: Build on ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux
+            add-data: "uf2:uf2"
+            ext: ""
+          - os: windows-latest
+            name: windows
+            add-data: "uf2;uf2"
+            ext: ".exe"
+          - os: macos-13
+            name: macos-x86_64
+            add-data: "uf2:uf2"
+            ext: ""
+          - os: macos-15
+            name: macos-arm64
+            add-data: "uf2:uf2"
+            ext: ""
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      - name: Build
+      - name: Install requirements
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          rm -rf dist build
-          pyinstaller --onefile \
-            --name TrenchCoat-linux \
-            --hidden-import mpremote \
-            --add-data "uf2:uf2" \
-            src/main.py
 
-      - name: List dist folder
-        run: ls -la dist
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: TrenchCoat-linux
-          path: dist/TrenchCoat-linux
-          if-no-files-found: error
-
-  build_macos:
-    name: Build on macOS
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      - name: Build
+      - name: Clean build dirs (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          rm -rf dist build
-          pyinstaller --onefile \
-            --name TrenchCoat-macos \
-            --hidden-import mpremote \
-            --add-data "uf2:uf2" \
-            src/main.py
-
-      - name: List dist folder
-        run: ls -la dist
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: TrenchCoat-macos
-          path: dist/TrenchCoat-macos
-          if-no-files-found: error
-
-  build_windows:
-    name: Build on Windows
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      - name: Build
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
           if (Test-Path dist) { Remove-Item dist -Recurse -Force }
           if (Test-Path build) { Remove-Item build -Recurse -Force }
-          pyinstaller --onefile --name TrenchCoat-windows --hidden-import mpremote --add-data "uf2;uf2" src/main.py
+
+      - name: Clean build dirs (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: rm -rf dist build
+
+      - name: Package with PyInstaller
+        shell: bash
+        run: |
+          pyinstaller --onefile \
+            --name TrenchCoat-${{ matrix.name }} \
+            --hidden-import mpremote \
+            --add-data "${{ matrix.add-data }}" \
+            src/main.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TrenchCoat-windows
-          path: dist/TrenchCoat-windows.exe
+          name: TrenchCoat-${{ matrix.name }}
+          path: dist/TrenchCoat-${{ matrix.name }}${{ matrix.ext }}
           if-no-files-found: error
 
   upload_release_assets:
     name: Upload Release Assets
-    needs: [build_linux, build_macos, build_windows]
+    needs: build
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Required to upload assets to a release
-    if: github.event_name == 'release'
+      contents: write
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Upload assets to release
+      - name: Create GitHub release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ./artifacts/TrenchCoat-linux/TrenchCoat-linux
-            ./artifacts/TrenchCoat-macos/TrenchCoat-macos
-            ./artifacts/TrenchCoat-windows/TrenchCoat-windows.exe
+            artifacts/TrenchCoat-linux/TrenchCoat-linux
+            artifacts/TrenchCoat-macos-x86_64/TrenchCoat-macos-x86_64
+            artifacts/TrenchCoat-macos-arm64/TrenchCoat-macos-arm64
+            artifacts/TrenchCoat-windows/TrenchCoat-windows.exe
