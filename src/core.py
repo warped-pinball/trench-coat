@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import string
+import struct
 import sys
 import tempfile
 import time
@@ -140,6 +141,126 @@ def list_bundled_uf2():
     if not os.path.isdir(uf2_dir):
         return []
     return [os.path.join(uf2_dir, f) for f in os.listdir(uf2_dir) if f.lower().endswith(".uf2")]
+
+
+# UF2 family IDs, used to tell which processor a firmware image targets.
+# https://github.com/raspberrypi/pico-sdk (boot/uf2 family ids)
+_UF2_MAGIC_START0 = b"UF2\n"
+_UF2_FLAG_FAMILY_ID_PRESENT = 0x00002000
+_UF2_FAMILY_RP2040 = 0xE48BFF56
+_UF2_FAMILY_ABSOLUTE = 0xE48BFF57  # absolute-addressed; accepted by both bootroms
+_UF2_FAMILY_RP2350 = {
+    0xE48BFF59,  # RP2350 ARM secure
+    0xE48BFF5A,  # RP2350 RISC-V
+    0xE48BFF5B,  # RP2350 ARM non-secure
+}
+
+
+def uf2_target_processor(uf2_path):
+    """Inspect a UF2 image's family IDs to determine its target processor.
+
+    Returns ``"rp2040"`` (Pico W), ``"rp2350"`` (Pico 2 W), ``"universal"`` (an
+    image accepted by both bootroms, e.g. a universal flash-nuke), or ``None``
+    if the image carries no recognizable family ID. This reads the UF2 block
+    headers directly, so it does not rely on the filename.
+    """
+    families = set()
+    try:
+        with open(uf2_path, "rb") as f:
+            while True:
+                block = f.read(512)
+                if len(block) < 512:
+                    break
+                if block[0:4] != _UF2_MAGIC_START0:
+                    continue
+                flags = struct.unpack("<I", block[8:12])[0]
+                if flags & _UF2_FLAG_FAMILY_ID_PRESENT:
+                    families.add(struct.unpack("<I", block[28:32])[0])
+    except OSError:
+        return None
+
+    has_rp2040 = _UF2_FAMILY_RP2040 in families
+    has_rp2350 = bool(families & _UF2_FAMILY_RP2350)
+    has_absolute = _UF2_FAMILY_ABSOLUTE in families
+
+    # RP2350-specific families are the definitive marker: real RP2350 images
+    # also carry a stray absolute (metadata) block, so check these first.
+    if has_rp2350:
+        return "rp2350"
+    # No RP2350-specific blocks, but accepted by both bootroms (e.g. a universal
+    # flash-nuke is RP2040 + absolute) -> not specific to one processor.
+    if has_absolute:
+        return "universal"
+    if has_rp2040:
+        return "rp2040"
+    return None
+
+
+# Each firmware image runs one Vector "system", and each system has its own
+# software update file published as a distinct asset in the same
+# warped-pinball/vector GitHub release (e.g. update_wpc.json). We infer the
+# system from keywords in the firmware filename so new version suffixes
+# (Vector_WPC_v6.uf2, ...) keep working. Order matters: more specific first.
+_FIRMWARE_SYSTEM_KEYWORDS = [
+    ("wpc", "wpc"),
+    ("dataeast", "data_east"),
+    ("data_east", "data_east"),
+    ("data-east", "data_east"),
+    # System 9 / 11 ("Vector_system_11_and_9_v4.uf2") is the default below.
+    # NOTE: only keywords for bundled, unambiguous firmware are listed here.
+    # Avoid loose tokens like "em" -- it is a substring of "system" and would
+    # mis-match the sys11 image. Add em/whitestar/classic with a safe keyword
+    # (e.g. "_em") when their firmware images are actually bundled.
+]
+
+# Per-system software update asset name in the GitHub release.
+SYSTEM_UPDATE_ASSET = {
+    "sys11": "update.json",
+    "wpc": "update_wpc.json",
+    "data_east": "update_data_east.json",
+    "em": "update_em.json",
+    "whitestar": "update_whitestar.json",
+    "classic": "update_classic.json",
+}
+DEFAULT_SYSTEM = "sys11"
+DEFAULT_UPDATE_ASSET = SYSTEM_UPDATE_ASSET[DEFAULT_SYSTEM]
+
+
+def firmware_system(firmware_path):
+    """Infer the Vector system id from a firmware filename.
+
+    Returns one of the keys in ``SYSTEM_UPDATE_ASSET``. Defaults to
+    ``"sys11"`` (the System 9 / 11 build) when no keyword matches or no path
+    is given.
+    """
+    name = os.path.basename(firmware_path or "").lower()
+    for keyword, system in _FIRMWARE_SYSTEM_KEYWORDS:
+        if keyword in name:
+            return system
+    return DEFAULT_SYSTEM
+
+
+def firmware_update_asset(firmware_path):
+    """Return the GitHub release asset name of the software update that matches
+    the given firmware image (e.g. ``update_wpc.json`` for a WPC build)."""
+    return SYSTEM_UPDATE_ASSET.get(firmware_system(firmware_path), DEFAULT_UPDATE_ASSET)
+
+
+def update_asset_for_boards(infos, default=DEFAULT_UPDATE_ASSET):
+    """Pick the software update asset from already-detected board identities.
+
+    Used when no firmware is being flashed (``--skip-firmware``): the system is
+    read from the board itself rather than inferred from a firmware filename.
+    ``infos`` is a list of identity dicts from ``Ray.identify()``. A Pico W is
+    always the legacy System 9 / 11 board; a Pico 2 W reports its system via
+    ``systemConfig``. Returns ``default`` if nothing usable was detected.
+    """
+    for info in infos:
+        if info.get("processor") == "rp2040":
+            return SYSTEM_UPDATE_ASSET[DEFAULT_SYSTEM]
+        if info.get("system"):
+            return SYSTEM_UPDATE_ASSET.get(info["system"], default)
+    return default
 
 
 def list_rpi_rp2_drives():

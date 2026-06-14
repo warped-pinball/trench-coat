@@ -6,8 +6,8 @@ import time
 import traceback
 
 from src import __version__
-from src.core import flash_firmware, flash_software, list_rpi_rp2_drives
-from src.interactive import display_welcome, select_software, select_uf2
+from src.core import firmware_update_asset, flash_firmware, flash_software, list_rpi_rp2_drives, update_asset_for_boards
+from src.interactive import display_welcome, report_and_guard_boards, select_software, select_uf2
 from src.ray import Ray
 from src.util import graceful_exit, wait_for
 
@@ -88,13 +88,29 @@ def main():
     if not args.skip_firmware:
         firmware = args.firmware if args.firmware else select_uf2()
 
-    # Select the software to flash
-    software = args.software if args.software else select_software()
+    # Resolve which software update to flash. The update file is system-specific
+    # (WPC, Data East, Sys11, ...):
+    #   - explicit --software: use it as-is
+    #   - firmware selected: pick the asset that matches that firmware up front
+    #   - --skip-firmware: defer until we can read the system from the board
+    software = args.software
+    if software is None and firmware is not None:
+        software = select_software(firmware_update_asset(firmware))
 
     # flash devices until user cancels
     while True:
         # wait until at least one device is connected
         total_boards = wait_for_one_or_more_devices()
+
+        # identify connected boards and guard against a firmware/processor mismatch
+        proceed, infos = report_and_guard_boards(firmware)
+        if not proceed:
+            graceful_exit(now=True)
+
+        # --skip-firmware with no explicit --software: choose the update file
+        # from the detected board's system (cached for later loop iterations).
+        if software is None:
+            software = select_software(update_asset_for_boards(infos))
 
         if firmware:
             flash_firmware(firmware)

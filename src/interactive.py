@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 from binascii import a2b_base64, unhexlify
 from datetime import datetime
 
@@ -9,7 +10,7 @@ import requests
 import rsa
 from InquirerPy import inquirer
 
-from src.core import list_bundled_uf2
+from src.core import list_bundled_uf2, uf2_target_processor
 from src.ray import Ray
 from src.util import graceful_exit
 
@@ -53,6 +54,87 @@ def select_uf2():
     return uf2_file_paths[uf2_files.index(menu_entry)]
 
 
+def _identify_with_retry(port, attempts: int = 3, delay: float = 0.5):
+    """Identify a board, retrying on transient serial errors.
+
+    A freshly enumerated USB CDC port on Windows is often not ready for a read
+    immediately, which surfaces as ClearCommError / PermissionError(13). We open
+    a fresh connection each attempt (a half-failed handshake can leave the port
+    unusable) and back off briefly between tries. Returns the identity dict, or
+    ``None`` if every attempt fails.
+    """
+    for attempt in range(attempts):
+        board = Ray(port)
+        try:
+            return board.identify()
+        except Exception:
+            if attempt + 1 < attempts:
+                time.sleep(delay)
+        finally:
+            board.close()
+    return None
+
+
+def report_and_guard_boards(firmware):
+    """Identify connected (running) boards, print what they are, and guard
+    against a processor mismatch with the selected firmware.
+
+    For each running board this prints whether it is a Pico W (legacy
+    System 9 / 11) or a Pico 2 W (and, for the Pico 2 W, which Vector system
+    its current firmware reports). If a firmware image was selected and its
+    target processor does not match a detected board, the user is warned and
+    asked whether to continue.
+
+    Returns ``(proceed, infos)`` where ``proceed`` is ``True`` to continue
+    flashing (``False`` to abort) and ``infos`` is the list of identity dicts
+    for the boards that were successfully identified. Boards already in
+    bootloader mode cannot be queried over the REPL and are skipped.
+    """
+    firmware_processor = uf2_target_processor(firmware) if firmware else None
+
+    ports = Ray.find_board_ports()
+    if not ports:
+        # Nothing running to identify (e.g. all boards already in bootloader).
+        return True, []
+
+    print("Detected boards:")
+    mismatch = False
+    infos = []
+    for port in ports:
+        info = _identify_with_retry(port)
+        if info is None:
+            # Couldn't talk to the board within the timeout/retries. Tell the
+            # user to replug (which reliably clears a wedged USB/REPL state)
+            # rather than silently hanging or skipping.
+            print(f"  {port}: no response from board.")
+            print("     Try unplugging and replugging this board, then press ENTER to retry detection")
+            print("     (or just press ENTER to skip detection and continue).")
+            input()
+            info = _identify_with_retry(port)
+            if info is None:
+                print(f"  {port}: still no response — skipping detection for this board.")
+                continue
+
+        infos.append(info)
+        board_name = info["board"] or "Unknown board"
+        if info["processor"] == "rp2350":
+            system = info["system"] or "unknown system"
+            print(f"  {port}: {board_name} (system: {system})")
+        elif info["processor"] == "rp2040":
+            print(f"  {port}: {board_name} (legacy System 9 / 11)")
+        else:
+            print(f"  {port}: {board_name}")
+
+        if firmware_processor in ("rp2040", "rp2350") and info["processor"] and firmware_processor != info["processor"]:
+            print(f"     WARNING: selected firmware targets {firmware_processor.upper()} but this board is {info['processor'].upper()}.")
+            mismatch = True
+
+    if mismatch:
+        proceed = bool(inquirer.confirm(message="One or more boards do not match the selected firmware. Flash anyway?", default=False).execute())
+        return proceed, infos
+    return True, infos
+
+
 def select_devices() -> list[Ray]:
     ports = Ray.find_board_ports()
     ports.append("Exit")
@@ -78,8 +160,12 @@ def select_devices() -> list[Ray]:
     return selected_ports
 
 
-def select_software():
+def select_software(update_filename="update.json"):
     # TODO allow for custom update.json files
+
+    # Each Vector system publishes its own software update asset in the same
+    # release (e.g. update_wpc.json); update_filename selects which one to pull.
+    print(f"Looking for software updates ({update_filename})...")
 
     # get list of all releases from github
     url = "https://api.github.com/repos/warped-pinball/vector/releases"
@@ -96,17 +182,17 @@ def select_software():
         print("No releases found in the repository.")
         graceful_exit()
 
-    # Filter releases with update.json file and no development tags
+    # Filter releases that carry this system's update file and have no dev tags
     filtered_releases = []
     for release in releases:
         tag = release["tag_name"].lstrip("v")
-        has_update_json = any(asset["name"] == "update.json" for asset in release["assets"])
+        has_update_json = any(asset["name"] == update_filename for asset in release["assets"])
 
         if "-" not in tag and has_update_json:
             filtered_releases.append(release)
 
     if not filtered_releases:
-        print("No suitable releases found (must have update.json file).")
+        print(f"No suitable releases found (must have a '{update_filename}' file).")
         graceful_exit()
 
     # Sort releases by semantic version (latest first)
@@ -150,12 +236,12 @@ def select_software():
     # Get the selected release data
     selected_release = release_map[selected_choice]
 
-    # Find the update.json asset and its download URL
+    # Find the update asset for this system and its download URL
     try:
-        update_json_asset = next(asset for asset in selected_release["assets"] if asset["name"] == "update.json")
+        update_json_asset = next(asset for asset in selected_release["assets"] if asset["name"] == update_filename)
         download_url = update_json_asset["browser_download_url"]
     except StopIteration:
-        print("Error: No 'update.json' asset found in the selected release.")
+        print(f"Error: No '{update_filename}' asset found in the selected release.")
         graceful_exit(now=True)
     # Download the update.json file to a temporary location
     temp_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
@@ -169,7 +255,7 @@ def select_software():
         f.write(response.content)
 
     if validate_update_file(temp_file.name):
-        print(f"Downloaded update file for {selected_release['tag_name']}")
+        print(f"Downloaded {update_filename} for {selected_release['tag_name']}")
         return temp_file.name
     else:
         print("Downloaded update file is invalid.")
