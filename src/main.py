@@ -6,8 +6,8 @@ import time
 import traceback
 
 from src import __version__
-from src.core import firmware_update_asset, flash_firmware, flash_software, list_rpi_rp2_drives, update_asset_for_boards
-from src.interactive import display_welcome, report_and_guard_boards, select_software, select_uf2
+from src.core import firmware_system, flash_firmware, flash_software, list_rpi_rp2_drives, system_for_boards
+from src.interactive import display_welcome, report_and_guard_boards, select_firmware_and_system, select_software
 from src.ray import Ray
 from src.util import graceful_exit, wait_for
 
@@ -83,19 +83,27 @@ def main():
     args = parse_arguments()
     display_welcome()
 
-    # Firmware selection
+    # Firmware / game-series selection. A series determines both the OS firmware
+    # and the software; several series can share an OS (EM runs on the WPC OS),
+    # so the system id is carried explicitly rather than re-inferred from the
+    # firmware filename.
     firmware = None
+    system = None
     if not args.skip_firmware:
-        firmware = args.firmware if args.firmware else select_uf2()
+        if args.firmware:
+            firmware = args.firmware
+            system = firmware_system(firmware)
+        else:
+            firmware, system = select_firmware_and_system()
 
     # Resolve which software update to flash. The update file is system-specific
-    # (WPC, Data East, Sys11, ...):
+    # (WPC, EM, Data East, Sys11, ...):
     #   - explicit --software: use it as-is
-    #   - firmware selected: pick the asset that matches that firmware up front
+    #   - series selected: pick the asset for that system up front
     #   - --skip-firmware: defer until we can read the system from the board
     software = args.software
-    if software is None and firmware is not None:
-        software = select_software(firmware_update_asset(firmware))
+    if software is None and system is not None:
+        software = select_software(system)
 
     # flash devices until user cancels
     while True:
@@ -110,7 +118,7 @@ def main():
         # --skip-firmware with no explicit --software: choose the update file
         # from the detected board's system (cached for later loop iterations).
         if software is None:
-            software = select_software(update_asset_for_boards(infos))
+            software = select_software(system_for_boards(infos))
 
         if firmware:
             flash_firmware(firmware)

@@ -222,6 +222,18 @@ SYSTEM_UPDATE_ASSET = {
     "whitestar": "update_whitestar.json",
     "classic": "update_classic.json",
 }
+
+# Human-friendly series name per system. These also match the labels used in
+# the "## Versions" block of each release body (e.g. "**WPC**: `1.7.5`"), which
+# is how we read the per-system version for display.
+SYSTEM_LABEL = {
+    "sys11": "Sys11",
+    "wpc": "WPC",
+    "data_east": "DataEast",
+    "em": "EM",
+    "whitestar": "WhiteStar",
+    "classic": "Classic",
+}
 DEFAULT_SYSTEM = "sys11"
 DEFAULT_UPDATE_ASSET = SYSTEM_UPDATE_ASSET[DEFAULT_SYSTEM]
 
@@ -240,14 +252,40 @@ def firmware_system(firmware_path):
     return DEFAULT_SYSTEM
 
 
-def firmware_update_asset(firmware_path):
-    """Return the GitHub release asset name of the software update that matches
-    the given firmware image (e.g. ``update_wpc.json`` for a WPC build)."""
-    return SYSTEM_UPDATE_ASSET.get(firmware_system(firmware_path), DEFAULT_UPDATE_ASSET)
+# Firmware (OS) keyword used to find the bundled UF2 image for each system.
+# Several systems can share one OS -- EM games run on the WPC OS -- so this maps
+# the system to the OS it boots, matched by keyword in the UF2 filename. A
+# system whose keyword matches no bundled UF2 is treated as "not available yet"
+# (e.g. the Classic OS is still in development).
+SYSTEM_FIRMWARE_KEYWORD = {
+    "sys11": "system",  # Vector_system_11_and_9_v4.uf2
+    "wpc": "wpc",  # Vector_WPC_v5.uf2
+    "em": "wpc",  # EM uses the WPC OS
+    "data_east": "dataeast",  # Vector_DataEast_v1.uf2
+    "classic": "classic",  # OS not yet released; no bundled UF2 matches yet
+}
+
+# Order the game series are offered in the selection menu.
+SERIES_MENU_ORDER = ["sys11", "wpc", "em", "data_east", "classic"]
 
 
-def update_asset_for_boards(infos, default=DEFAULT_UPDATE_ASSET):
-    """Pick the software update asset from already-detected board identities.
+def find_system_firmware(system, bundled_paths):
+    """Return the bundled UF2 path that provides the OS for ``system``.
+
+    Matches ``SYSTEM_FIRMWARE_KEYWORD[system]`` against each UF2 filename.
+    Returns ``None`` if the system has no firmware keyword or no bundled image
+    matches (i.e. its OS is not available yet)."""
+    keyword = SYSTEM_FIRMWARE_KEYWORD.get(system)
+    if not keyword:
+        return None
+    for path in bundled_paths:
+        if keyword in os.path.basename(path).lower():
+            return path
+    return None
+
+
+def system_for_boards(infos, default=DEFAULT_SYSTEM):
+    """Pick the Vector system id from already-detected board identities.
 
     Used when no firmware is being flashed (``--skip-firmware``): the system is
     read from the board itself rather than inferred from a firmware filename.
@@ -257,9 +295,9 @@ def update_asset_for_boards(infos, default=DEFAULT_UPDATE_ASSET):
     """
     for info in infos:
         if info.get("processor") == "rp2040":
-            return SYSTEM_UPDATE_ASSET[DEFAULT_SYSTEM]
+            return DEFAULT_SYSTEM
         if info.get("system"):
-            return SYSTEM_UPDATE_ASSET.get(info["system"], default)
+            return info["system"]
     return default
 
 

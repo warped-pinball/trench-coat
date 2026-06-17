@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import tempfile
 import time
 from binascii import a2b_base64, unhexlify
@@ -10,9 +11,12 @@ import requests
 import rsa
 from InquirerPy import inquirer
 
-from src.core import list_bundled_uf2, uf2_target_processor
+from src.core import DEFAULT_SYSTEM, DEFAULT_UPDATE_ASSET, SERIES_MENU_ORDER, SYSTEM_LABEL, SYSTEM_UPDATE_ASSET, find_system_firmware, firmware_system, list_bundled_uf2, uf2_target_processor
 from src.ray import Ray
 from src.util import graceful_exit
+
+# Matches a "**Label**: `version`" line in a release body's "## Versions" block.
+_RELEASE_VERSION_RE = re.compile(r"\*\*([^*]+)\*\*:\s*`([^`]+)`")
 
 
 def display_welcome():
@@ -24,34 +28,48 @@ def display_welcome():
     print()
 
 
-def select_uf2():
-    """Interactive function to select a UF2 file"""
-    uf2_file_paths = list_bundled_uf2()
+def select_firmware_and_system():
+    """Interactive game-series selector.
 
-    # remove nuke
-    uf2_file_paths = [f for f in uf2_file_paths if "nuke.uf2" not in f]
+    Presents the supported game series (System 9 / 11, WPC, EM, Data East,
+    Classic, ...). Each series maps to the OS firmware it boots -- several
+    series can share one OS (EM runs on the WPC OS) -- plus its own software.
+    Series whose OS is not bundled yet are shown as "(coming soon)" and cannot
+    be selected.
 
-    uf2_files = [os.path.basename(f) for f in uf2_file_paths]
+    Returns ``(firmware_path, system_id)``.
+    """
+    bundled = [f for f in list_bundled_uf2() if "nuke.uf2" not in f]
 
-    # sort the list of uf2 files
-    uf2_files.sort()
+    # Build a menu entry for each known series, resolving its OS firmware.
+    entries = []  # list of (display_text, system_id, firmware_path_or_None)
+    for system in SERIES_MENU_ORDER:
+        label = SYSTEM_LABEL.get(system, system)
+        firmware = find_system_firmware(system, bundled)
+        display = label if firmware else f"{label} (coming soon)"
+        entries.append((display, system, firmware))
 
-    uf2_files.append("Custom")
-    uf2_files.append("Exit")
-
-    menu_entry = inquirer.select(message="Select a firmware file to flash:", choices=uf2_files, default=0).execute()
+    choices = [e[0] for e in entries] + ["Custom firmware...", "Exit"]
+    menu_entry = inquirer.select(message="Select the game series to flash:", choices=choices, default=0).execute()
 
     if menu_entry == "Exit":
         graceful_exit(now=True)
-    elif menu_entry == "Custom":
+    if menu_entry == "Custom firmware...":
         path = inquirer.text("Enter the full path to a custom UF2 file:").execute()
         print(f"You entered: {path}")
         if not os.path.isfile(path):
             print("Invalid file path.")
             graceful_exit()
-        return path
+        return path, firmware_system(path)
 
-    return uf2_file_paths[uf2_files.index(menu_entry)]
+    display, system, firmware = next(e for e in entries if e[0] == menu_entry)
+    if firmware is None:
+        # Series chosen whose OS is not released yet -- explain and re-prompt.
+        label = SYSTEM_LABEL.get(system, system)
+        print(f"{label} is not available yet - its OS is still in development. Please choose another series.")
+        return select_firmware_and_system()
+
+    return firmware, system
 
 
 def _identify_with_retry(port, attempts: int = 3, delay: float = 0.5):
@@ -112,7 +130,7 @@ def report_and_guard_boards(firmware):
             input()
             info = _identify_with_retry(port)
             if info is None:
-                print(f"  {port}: still no response — skipping detection for this board.")
+                print(f"  {port}: still no response - skipping detection for this board.")
                 continue
 
         infos.append(info)
@@ -160,12 +178,24 @@ def select_devices() -> list[Ray]:
     return selected_ports
 
 
-def select_software(update_filename="update.json"):
+def _parse_release_versions(body):
+    """Parse the "## Versions" block of a release body into a {label: version}
+    dict, e.g. {"Vector": "1.11.10", "WPC": "1.7.5", ...}. Returns {} if absent."""
+    versions = {}
+    for label, version in _RELEASE_VERSION_RE.findall(body or ""):
+        versions[label.strip()] = version.strip()
+    return versions
+
+
+def select_software(system=DEFAULT_SYSTEM):
     # TODO allow for custom update.json files
 
     # Each Vector system publishes its own software update asset in the same
-    # release (e.g. update_wpc.json); update_filename selects which one to pull.
-    print(f"Looking for software updates ({update_filename})...")
+    # release (e.g. update_wpc.json), and the release body reports both the
+    # overall Vector version and this system's own version.
+    update_filename = SYSTEM_UPDATE_ASSET.get(system, DEFAULT_UPDATE_ASSET)
+    series_label = SYSTEM_LABEL.get(system, system)
+    print(f"Looking for {series_label} software updates ({update_filename})...")
 
     # get list of all releases from github
     url = "https://api.github.com/repos/warped-pinball/vector/releases"
@@ -212,17 +242,26 @@ def select_software(update_filename="update.json"):
 
     filtered_releases.sort(key=lambda r: parse_version(r["tag_name"]), reverse=True)
 
-    # Format dates and prepare choices
+    # Format dates and prepare choices. Show both the series-specific version
+    # and the overall Vector version, plus the series the build is from.
     choices = []
     release_map = {}  # Map formatted choice to original release
 
     for i, release in enumerate(filtered_releases):
-        name = release["name"] or release["tag_name"]
+        versions = _parse_release_versions(release.get("body"))
+        vector_version = versions.get("Vector", release["tag_name"].lstrip("v"))
+        system_version = versions.get(series_label)
+
         published_date = datetime.strptime(release["published_at"], "%Y-%m-%dT%H:%M:%SZ")
         formatted_date = published_date.strftime("%Y-%m-%d")
+
+        if system_version:
+            choice_text = f"{series_label} v{system_version}  (Vector {vector_version}, {formatted_date})"
+        else:
+            # Older release without a per-series version listed.
+            choice_text = f"{series_label}  (Vector {vector_version}, {formatted_date})"
         if i == 0:
-            name += " (Recommended)"
-        choice_text = f"{name} ({formatted_date})"
+            choice_text += "  (Recommended)"
         choices.append(choice_text)
         release_map[choice_text] = release
 
