@@ -10,7 +10,7 @@ authors = [
     {name = "Warped Pinball", email = "mullinmax@gmail.com"}
 ]
 license = {text = "CC BY-NC 4.0"}
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: CC BY-NC 4.0 License",
