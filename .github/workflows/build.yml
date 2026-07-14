@@ -18,12 +18,12 @@ jobs:
             name: linux
             add-data: "uf2:uf2"
             ext: ""
-            python-arch: x64
+            python_arch: x64
           - os: windows-latest
             name: windows
             add-data: "uf2;uf2"
             ext: ".exe"
-            python-arch: x64
+            python_arch: x64
           # Intel macOS runners (macos-13) are being retired and can leave the
           # job queued for hours, so build the x86_64 binary on an arm64 runner
           # using an x86_64 Python under Rosetta instead.
@@ -31,12 +31,12 @@ jobs:
             name: macos-x86_64
             add-data: "uf2:uf2"
             ext: ""
-            python-arch: x64
+            python_arch: x64
           - os: macos-15
             name: macos-arm64
             add-data: "uf2:uf2"
             ext: ""
-            python-arch: arm64
+            python_arch: arm64
 
     steps:
       - name: Checkout code
@@ -45,13 +45,13 @@ jobs:
       # Rosetta is required to run the x86_64 Python on the arm64 runner.
       - name: Install Rosetta (x86_64 macOS build)
         if: matrix.name == 'macos-x86_64'
-        run: softwareupdate --install-rosetta --agree-to-license
+        run: sudo softwareupdate --install-rosetta --agree-to-license
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.10"
-          architecture: ${{ matrix.python-arch }}
+          architecture: ${{ matrix.python_arch }}
 
       - name: Install requirements
         run: |
