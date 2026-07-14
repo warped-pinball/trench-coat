@@ -18,40 +18,49 @@ jobs:
             name: linux
             add-data: "uf2:uf2"
             ext: ""
-            python_arch: x64
+            target_arch: ""
           - os: windows-latest
             name: windows
             add-data: "uf2;uf2"
             ext: ".exe"
-            python_arch: x64
+            target_arch: ""
           # Intel macOS runners (macos-13) are being retired and can leave the
-          # job queued for hours, so build the x86_64 binary on an arm64 runner
-          # using an x86_64 Python under Rosetta instead.
+          # job queued for hours, so both macOS binaries are built on an arm64
+          # runner from a universal2 Python, with PyInstaller targeting each
+          # architecture via --target-arch.
           - os: macos-15
             name: macos-x86_64
             add-data: "uf2:uf2"
             ext: ""
-            python_arch: x64
+            target_arch: x86_64
           - os: macos-15
             name: macos-arm64
             add-data: "uf2:uf2"
             ext: ""
-            python_arch: arm64
+            target_arch: arm64
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      # Rosetta is required to run the x86_64 Python on the arm64 runner.
-      - name: Install Rosetta (x86_64 macOS build)
-        if: matrix.name == 'macos-x86_64'
-        run: sudo softwareupdate --install-rosetta --agree-to-license
-
-      - name: Set up Python
+      - name: Set up Python (Linux/Windows)
+        if: runner.os != 'macOS'
         uses: actions/setup-python@v6
         with:
           python-version: "3.10"
-          architecture: ${{ matrix.python_arch }}
+
+      # The universal2 build from python.org ships both x86_64 and arm64
+      # slices, which is what PyInstaller needs to cross-target either
+      # architecture with --target-arch on the arm64 runner.
+      - name: Set up universal2 Python (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          curl -fsSL -o /tmp/python.pkg \
+            https://www.python.org/ftp/python/3.10.11/python-3.10.11-macos11.pkg
+          sudo installer -pkg /tmp/python.pkg -target /
+          PYBIN=/Library/Frameworks/Python.framework/Versions/3.10/bin
+          sudo ln -sf "$PYBIN/python3" "$PYBIN/python"
+          echo "$PYBIN" >> "$GITHUB_PATH"
 
       - name: Install requirements
         run: |
@@ -76,7 +85,15 @@ jobs:
             --name TrenchCoat-${{ matrix.name }} \
             --hidden-import mpremote \
             --add-data "${{ matrix.add-data }}" \
+            ${{ matrix.target_arch && format('--target-arch {0}', matrix.target_arch) || '' }} \
             src/main.py
+
+      - name: Verify macOS binary architecture
+        if: runner.os == 'macOS'
+        run: |
+          BIN="dist/TrenchCoat-${{ matrix.name }}"
+          echo "Built architectures: $(lipo -archs "$BIN")"
+          lipo -archs "$BIN" | grep -qw "${{ matrix.target_arch }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
