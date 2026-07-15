@@ -5,10 +5,51 @@ import pytest
 
 import src.interactive as interactive
 from src.interactive import (
+    _identify_with_retry,
     _parse_release_versions,
     read_last_significant_line,
     validate_update_file,
 )
+
+
+class FakeRay:
+    """Stand-in for Ray whose identify() fails a set number of times."""
+
+    identity = {"processor": "rp2350", "board": "Pico 2 W", "system": "wpc"}
+    failures_left = 0
+
+    def __init__(self, port):
+        self.port = port
+
+    def identify(self):
+        if FakeRay.failures_left > 0:
+            FakeRay.failures_left -= 1
+            raise TimeoutError("board still booting")
+        return dict(FakeRay.identity)
+
+    def close(self):
+        pass
+
+
+class TestIdentifyWithRetry:
+    def test_keeps_retrying_while_board_boots(self, monkeypatch):
+        # A freshly plugged-in board doesn't answer until its firmware has
+        # finished booting; the retry loop must outlast many failed attempts.
+        monkeypatch.setattr(interactive, "Ray", FakeRay)
+        monkeypatch.setattr(interactive.time, "sleep", lambda s: None)
+        FakeRay.failures_left = 10
+        waits = []
+        info = _identify_with_retry("COM7", timeout=60, on_wait=lambda: waits.append(1))
+        assert info == FakeRay.identity
+        assert waits == [1]  # on_wait fires once, after the first failure
+
+    def test_gives_up_after_deadline(self, monkeypatch):
+        monkeypatch.setattr(interactive, "Ray", FakeRay)
+        monkeypatch.setattr(interactive.time, "sleep", lambda s: None)
+        FakeRay.failures_left = 10**9
+        clock = iter(range(10**9))
+        monkeypatch.setattr(interactive.time, "monotonic", lambda: next(clock))
+        assert _identify_with_retry("COM7", timeout=45) is None
 
 
 class TestParseReleaseVersions:
