@@ -6,8 +6,19 @@ import time
 import traceback
 
 from src import __version__
-from src.core import firmware_system, flash_firmware, flash_software, list_rpi_rp2_drives, system_for_boards
-from src.interactive import display_welcome, report_and_guard_boards, select_firmware_and_system, select_software
+from src.core import (
+    firmware_system,
+    flash_firmware,
+    flash_software,
+    list_rpi_rp2_drives,
+    system_for_boards,
+)
+from src.interactive import (
+    display_welcome,
+    report_and_guard_boards,
+    select_firmware_and_system,
+    select_software,
+)
 from src.ray import Ray
 from src.util import graceful_exit, wait_for
 

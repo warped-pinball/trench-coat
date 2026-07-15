@@ -19,6 +19,15 @@ jobs:
         python -m pip install --upgrade pip
         pip install build twine
 
+    # The version lives only in src/__init__.py (pyproject.toml reads it
+    # dynamically). The release tag must match it so PyPI and GitHub agree.
+    - name: Check release tag matches package version
+      run: |
+        PKG_VERSION=$(python -c "from src import __version__; print(__version__)")
+        TAG="${GITHUB_REF_NAME#v}"
+        echo "package: $PKG_VERSION  tag: $TAG"
+        test "$PKG_VERSION" = "$TAG" || { echo "::error::Release tag '$GITHUB_REF_NAME' does not match src.__version__ '$PKG_VERSION'"; exit 1; }
+
     - name: Build package
       run: python -m build
 

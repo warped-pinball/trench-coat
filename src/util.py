@@ -23,11 +23,11 @@ def wait_for(listen_func, timeout=10):
     :param msg: Message to display while waiting.
     :param timeout: Timeout in seconds.
     """
-    start_time = time.time()
+    start_time = time.monotonic()
     dots = 0
     try:
         while True:
-            if timeout is not None and (time.time() - start_time) > timeout:
+            if timeout is not None and (time.monotonic() - start_time) > timeout:
                 raise TimeoutError(f"Timeout after waiting for {timeout} seconds.")
             time.sleep(0.5)
             dots = (dots + 1) % 5

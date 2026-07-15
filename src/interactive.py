@@ -11,7 +11,17 @@ import requests
 import rsa
 from InquirerPy import inquirer
 
-from src.core import DEFAULT_SYSTEM, DEFAULT_UPDATE_ASSET, SERIES_MENU_ORDER, SYSTEM_LABEL, SYSTEM_UPDATE_ASSET, find_system_firmware, firmware_system, list_bundled_uf2, uf2_target_processor
+from src.core import (
+    DEFAULT_SYSTEM,
+    DEFAULT_UPDATE_ASSET,
+    SERIES_MENU_ORDER,
+    SYSTEM_LABEL,
+    SYSTEM_UPDATE_ASSET,
+    find_system_firmware,
+    firmware_system,
+    list_bundled_uf2,
+    uf2_target_processor,
+)
 from src.ray import Ray
 from src.util import graceful_exit
 
@@ -155,11 +165,12 @@ def report_and_guard_boards(firmware):
 
 def select_devices() -> list[Ray]:
     ports = Ray.find_board_ports()
-    ports.append("Exit")
 
     if not ports:
         print("No Warped Pinball devices found. Please plug in via USB and try again. Do not press the 'BOOTSEL' button when plugging in.")
         graceful_exit()
+
+    ports.append("Exit")
 
     selected_ports = []
     while not selected_ports:
@@ -200,12 +211,15 @@ def select_software(system=DEFAULT_SYSTEM):
     # get list of all releases from github
     url = "https://api.github.com/repos/warped-pinball/vector/releases"
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
     except requests.exceptions.Timeout:
         print("Connection timed out. Please check your internet connection.")
         graceful_exit()
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to fetch releases from GitHub: {e}")
+        graceful_exit()
 
-    response.raise_for_status()
     releases = response.json()
 
     if not releases:
@@ -287,8 +301,13 @@ def select_software(system=DEFAULT_SYSTEM):
     temp_file.close()
 
     # Download the file
-    response = requests.get(download_url)
-    response.raise_for_status()
+    try:
+        response = requests.get(download_url, timeout=60)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to download the update file: {e}")
+        os.remove(temp_file.name)
+        graceful_exit()
 
     with open(temp_file.name, "wb") as f:
         f.write(response.content)

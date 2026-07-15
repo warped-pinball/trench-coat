@@ -7,8 +7,6 @@ import sys
 import tempfile
 import time
 
-import pkg_resources
-
 from src.ray import Ray
 from src.util import graceful_exit, wait_for
 
@@ -125,22 +123,20 @@ def flash_firmware(firmware_path):
 def list_bundled_uf2():
     """List available bundled UF2 files"""
 
+    candidates = []
     if hasattr(sys, "_MEIPASS"):
-        uf2_dir = os.path.join(sys._MEIPASS, "uf2")
+        # PyInstaller bundle (--add-data "uf2:uf2")
+        candidates.append(os.path.join(sys._MEIPASS, "uf2"))
     else:
-        try:
-            # Try to get the installed package path first
-            uf2_dir = pkg_resources.resource_filename("src", "uf2")
-            if not os.path.isdir(uf2_dir):
-                # Fall back to development path
-                uf2_dir = os.path.join(os.path.dirname(__file__), "uf2")
-        except (ImportError, ModuleNotFoundError):
-            # Fall back to development path
-            uf2_dir = os.path.join(os.path.dirname(__file__), "uf2")
+        # Installed package data (if present)
+        candidates.append(os.path.join(os.path.dirname(__file__), "uf2"))
+        # Development checkout: uf2/ lives at the repository root
+        candidates.append(os.path.join(os.path.dirname(os.path.dirname(__file__)), "uf2"))
 
-    if not os.path.isdir(uf2_dir):
-        return []
-    return [os.path.join(uf2_dir, f) for f in os.listdir(uf2_dir) if f.lower().endswith(".uf2")]
+    for uf2_dir in candidates:
+        if os.path.isdir(uf2_dir):
+            return [os.path.join(uf2_dir, f) for f in os.listdir(uf2_dir) if f.lower().endswith(".uf2")]
+    return []
 
 
 # UF2 family IDs, used to tell which processor a firmware image targets.
@@ -344,10 +340,10 @@ def flash_software(software):
         ports = Ray.find_board_ports()
         print(f"Found {len(ports)} devices to flash software to.")
         boards = [Ray(port) for port in ports]
+        update_files = get_files_from_update_file(software)
         for i, board in enumerate(boards):
             print(f"Flashing software to {board.port} ({i+1} of {len(ports)})")
             # Copy files to the board
-            update_files = get_files_from_update_file(software)
             board.write_update_to_board(update_files)
 
         # restart the boards
