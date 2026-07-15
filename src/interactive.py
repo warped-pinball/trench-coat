@@ -82,25 +82,40 @@ def select_firmware_and_system():
     return firmware, system
 
 
-def _identify_with_retry(port, attempts: int = 3, delay: float = 0.5):
-    """Identify a board, retrying on transient serial errors.
+def _identify_with_retry(port, timeout: float = 45.0, delay: float = 0.5, on_wait=None):
+    """Identify a board, retrying until ``timeout`` seconds have elapsed.
 
-    A freshly enumerated USB CDC port on Windows is often not ready for a read
-    immediately, which surfaces as ClearCommError / PermissionError(13). We open
-    a fresh connection each attempt (a half-failed handshake can leave the port
-    unusable) and back off briefly between tries. Returns the identity dict, or
-    ``None`` if every attempt fails.
+    Two things make the first attempts on a freshly plugged-in board fail:
+
+    - A just-enumerated USB CDC port on Windows is often not ready for a read
+      immediately, which surfaces as ClearCommError / PermissionError(13).
+    - The COM port enumerates seconds before the Vector firmware finishes
+      booting, and while boot code is still running the REPL does not answer
+      the raw-REPL handshake. Boot can take tens of seconds, so a fixed small
+      number of attempts always lands inside the boot window.
+
+    We therefore retry on a wall-clock deadline rather than an attempt count,
+    opening a fresh connection each attempt (a half-failed handshake can leave
+    the port unusable) and backing off briefly between tries. ``on_wait`` is
+    called once, after the first failed attempt, so callers can tell the user
+    why detection is taking a moment. Returns the identity dict, or ``None``
+    if the deadline passes without a response.
     """
-    for attempt in range(attempts):
+    deadline = time.monotonic() + timeout
+    waiting_reported = False
+    while True:
         board = Ray(port)
         try:
             return board.identify()
         except Exception:
-            if attempt + 1 < attempts:
-                time.sleep(delay)
+            if time.monotonic() >= deadline:
+                return None
+            if not waiting_reported and on_wait is not None:
+                on_wait()
+                waiting_reported = True
+            time.sleep(delay)
         finally:
             board.close()
-    return None
 
 
 def report_and_guard_boards(firmware):
@@ -129,11 +144,11 @@ def report_and_guard_boards(firmware):
     mismatch = False
     infos = []
     for port in ports:
-        info = _identify_with_retry(port)
+        info = _identify_with_retry(port, on_wait=lambda port=port: print(f"  {port}: waiting for the board to finish booting (this can take up to a minute)..."))
         if info is None:
-            # Couldn't talk to the board within the timeout/retries. Tell the
-            # user to replug (which reliably clears a wedged USB/REPL state)
-            # rather than silently hanging or skipping.
+            # Couldn't talk to the board even after waiting out a full boot.
+            # Tell the user to replug (which reliably clears a wedged USB/REPL
+            # state) rather than silently hanging or skipping.
             print(f"  {port}: no response from board.")
             print("     Try unplugging and replugging this board, then press ENTER to retry detection")
             print("     (or just press ENTER to skip detection and continue).")
