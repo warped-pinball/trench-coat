@@ -8,7 +8,7 @@ import serial
 import serial.tools.list_ports
 
 PICO_VID = 0x2E8A
-PICO_PID = 0x0005
+PICO_PID = 0x0005  # MicroPython CDC (typical, but we match on VID alone)
 COMMAND_CHUNK_SIZE = 5000
 
 
@@ -43,26 +43,61 @@ class Ray:
             ray.close()
 
     def open(self, raw_repl: bool = True):
-        """Open the serial connection"""
+        """Open the serial connection.
+
+        A just-enumerated USB CDC port (or one reopened immediately after a
+        close) can transiently refuse to open or flush on Windows, raising
+        SerialException / OSError / PermissionError. Retry a few times with a
+        short backoff before giving up.
+        """
         if not hasattr(self, "ser") or not self.ser or not self.ser.is_open:
-            self.ser = serial.Serial(self.port, 115200, timeout=0.1)
-            self.ser.flushInput()
-            self.ser.flushOutput()
+            last_err = None
+            for _ in range(5):
+                try:
+                    self.ser = serial.Serial(self.port, 115200, timeout=0.1)
+                    self.ser.flushInput()
+                    self.ser.flushOutput()
+                    break
+                except (serial.SerialException, OSError) as e:
+                    last_err = e
+                    # Drop the half-open handle without de-registering the
+                    # instance (close() would remove it from _instances).
+                    try:
+                        if getattr(self, "ser", None):
+                            self.ser.close()
+                    except Exception:
+                        pass
+                    time.sleep(0.3)
+            else:
+                raise last_err
             if raw_repl:
                 self.ser.write(b"\x03\x03")  # Ctrl+C
                 time.sleep(0.1)  # Give time for the interrupt to process
                 self.ser.write(b"\x01")
                 time.sleep(0.1)  # Give time for the interrupt to process
 
+    @staticmethod
+    def _port_is_board(port_info) -> bool:
+        """True if a serial port belongs to a Pico-family board (VID 0x2E8A).
+
+        We match on vendor ID alone: among serial ports a 0x2E8A device is
+        always one of our boards (the UF2 bootloader enumerates as mass storage,
+        not a COM port). On Windows ``comports()`` sometimes leaves the parsed
+        ``vid``/``pid`` as ``None`` even though the device is enumerated, so we
+        fall back to scanning the raw ``hwid`` string, which still carries the
+        VID. This is what makes an already-plugged-in board detectable without a
+        replug.
+        """
+        if port_info.vid == PICO_VID:
+            return True
+        hwid = (port_info.hwid or "").upper()
+        return f"VID:PID={PICO_VID:04X}" in hwid or f"VID_{PICO_VID:04X}" in hwid
+
     @classmethod
     def find_board_ports(cls) -> list[str]:
-        board_ports = []
-        for port_info in serial.tools.list_ports.comports():
-            if port_info.vid == PICO_VID and port_info.pid == PICO_PID:
-                board_ports.append(port_info.device)
-        return board_ports
+        return [p.device for p in serial.tools.list_ports.comports() if cls._port_is_board(p)]
 
-    def send_command(self, script, ignore_response=False) -> str:
+    def send_command(self, script, ignore_response=False, read_timeout=None) -> str:
         """
         Send a script to the MicroPython board in *raw REPL mode*,
         capture and return stdout (combined into one string),
@@ -70,9 +105,15 @@ class Ray:
 
         For multi-line scripts, ensure the script is properly
         spaced / indented as needed. We'll send it as-is in raw mode.
+
+        If ``read_timeout`` (seconds) is given, waiting for the board's initial
+        ``OK`` / first output is bounded and raises ``TimeoutError`` instead of
+        blocking forever when a board never drops to the REPL. Leave it ``None``
+        for long-running operations whose duration is not known up front.
         """
         # Make sure the serial port is open
         self.open()
+        deadline = (time.time() + read_timeout) if read_timeout is not None else None
 
         if isinstance(script, list):
             script = "\n".join(script)
@@ -103,10 +144,14 @@ class Ray:
                     # add anything after the OK to the buffer
                     buf += chunk[chunk.index(b"OK") + 2 :]
                     break
+            if deadline is not None and time.time() > deadline:
+                raise TimeoutError(f"No 'OK' response from board on {self.port} within {read_timeout}s")
             time.sleep(0.01)
 
         # wait until we have data in the input buffer
         while self.ser.in_waiting == 0:
+            if deadline is not None and time.time() > deadline:
+                raise TimeoutError(f"No output from board on {self.port} within {read_timeout}s")
             time.sleep(0.01)
 
         # read all until it's been idle for 1 second
@@ -297,6 +342,97 @@ class Ray:
         disconnect or the REPL might get re-initialized.
         """
         self.send_command("import machine\nmachine.reset()", ignore_response=True)
+
+    def _exec_value(self, script: list[str], timeout=None) -> str:
+        """
+        Run a script on the board that prints a single value wrapped in
+        ``<<<`` / ``>>>`` markers, and return the text between the markers.
+
+        Using markers makes parsing robust against raw-REPL echo, prompt
+        characters, and any incidental output. Returns "" if no marked
+        value is found. ``timeout`` bounds how long to wait for the board to
+        respond (see ``send_command``).
+        """
+        out = self.send_command(script, read_timeout=timeout)
+        start = out.find("<<<")
+        end = out.rfind(">>>")
+        if start == -1 or end == -1 or end <= start:
+            return ""
+        return out[start + 3 : end].strip()
+
+    def detect_processor(self, timeout: float | None = 3.0) -> str | None:
+        """
+        Detect the board's processor / silicon family.
+
+        Returns ``"rp2040"`` (Pico W), ``"rp2350"`` (Pico 2 W), or ``None`` if
+        it can't be determined. This reads ``os.uname().machine`` which is fixed
+        in silicon, so it works even on a freshly flashed or otherwise blank
+        board.
+        """
+        script = [
+            "import os",
+            "try:",
+            "    _m = os.uname().machine",
+            "except Exception:",
+            "    _m = ''",
+            "print('<<<' + _m + '>>>')",
+        ]
+        machine = self._exec_value(script, timeout).upper()
+        if "RP2350" in machine:
+            return "rp2350"
+        if "RP2040" in machine:
+            return "rp2040"
+        return None
+
+    def detect_system(self, timeout: float | None = 3.0) -> str | None:
+        """
+        Detect the Vector system variant of the currently installed firmware by
+        reading ``systemConfig.vectorSystem``.
+
+        Returns one of the Vector system identifiers (e.g. ``"sys11"``,
+        ``"wpc"``, ``"data_east"``, ``"em"``, ``"classic"``, ``"whitestar"``),
+        or ``None`` if the board has no ``systemConfig`` module (e.g. it is
+        blank/nuked or running non-Vector firmware).
+        """
+        script = [
+            "try:",
+            "    import systemConfig",
+            "    _s = systemConfig.vectorSystem",
+            "except Exception:",
+            "    _s = ''",
+            "print('<<<' + str(_s) + '>>>')",
+        ]
+        system = self._exec_value(script, timeout)
+        return system or None
+
+    # Map of detected processor -> human friendly board name.
+    PROCESSOR_BOARD_NAMES = {
+        "rp2040": "Pico W",
+        "rp2350": "Pico 2 W",
+    }
+
+    def identify(self, timeout: float | None = 3.0) -> dict[str, str | None]:
+        """
+        Identify a connected board.
+
+        Returns a dict with:
+          - ``processor``: ``"rp2040"`` / ``"rp2350"`` / ``None``
+          - ``board``: friendly name ("Pico W" / "Pico 2 W") or ``None``
+          - ``system``: Vector system variant of the installed firmware, or
+            ``None`` (only meaningful for Pico 2 W; a Pico W is always the
+            legacy System 9 / 11 board)
+
+        The system probe is skipped for Pico W boards, which by definition run
+        the legacy System 9 / 11 firmware.
+        """
+        processor = self.detect_processor(timeout)
+        board = self.PROCESSOR_BOARD_NAMES.get(processor) if processor else None
+
+        system = None
+        if processor == "rp2350":
+            system = self.detect_system(timeout)
+
+        return {"processor": processor, "board": board, "system": system}
 
     def sha256_index(self) -> dict[str, str]:
         """
