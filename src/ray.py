@@ -97,7 +97,7 @@ class Ray:
     def find_board_ports(cls) -> list[str]:
         return [p.device for p in serial.tools.list_ports.comports() if cls._port_is_board(p)]
 
-    def send_command(self, script, ignore_response=False, read_timeout=None) -> str:
+    def send_command(self, script, ignore_response=False, read_timeout=None, wait_for_completion=False) -> str:
         """
         Send a script to the MicroPython board in *raw REPL mode*,
         capture and return stdout (combined into one string),
@@ -110,6 +110,15 @@ class Ray:
         ``OK`` / first output is bounded and raises ``TimeoutError`` instead of
         blocking forever when a board never drops to the REPL. Leave it ``None``
         for long-running operations whose duration is not known up front.
+
+        With ``ignore_response=True`` the response is not returned, but the
+        board still produces one (the raw REPL echoes ``OK`` and terminates
+        output with EOT bytes). ``wait_for_completion=True`` reads and discards
+        that response until the command finishes. This matters when sending
+        many commands back-to-back: if nothing ever drains the board's output,
+        the USB CDC buffers fill up, MicroPython blocks writing to stdout, and
+        the board deadlocks mid-script. Leave it False only for commands that
+        never complete normally (e.g. machine.reset / machine.bootloader).
         """
         # Make sure the serial port is open
         self.open()
@@ -133,7 +142,21 @@ class Ray:
         self.ser.write(b"\x04")
 
         if ignore_response:
-            return
+            if not wait_for_completion:
+                return
+            # Drain the raw REPL response until the command finishes. Raw REPL
+            # output ends with EOT (0x04) marking end of stdout, another EOT
+            # marking end of stderr, then the ">" prompt.
+            tail = b""
+            while True:
+                if self.ser.in_waiting > 0:
+                    chunk = self.ser.read(self.ser.in_waiting)
+                    tail = (tail + chunk)[-3:]
+                    if tail.endswith(b"\x04>"):
+                        return
+                elif deadline is not None and time.time() > deadline:
+                    raise TimeoutError(f"Board on {self.port} did not finish command within {read_timeout}s")
+                time.sleep(0.01)
 
         # read in the initial "OK" response
         buf = b""
@@ -285,7 +308,7 @@ class Ray:
             if current_len + len(line) > COMMAND_CHUNK_SIZE:
                 # send the block
                 block_script = "\n".join(current_block)
-                self.send_command(block_script, ignore_response=True)
+                self.send_command(block_script, ignore_response=True, wait_for_completion=True, read_timeout=60)
                 current_block = [line]
                 current_len = len(line)
             else:
@@ -295,11 +318,11 @@ class Ray:
         # Send any remainder
         if current_block:
             block_script = "\n".join(current_block)
-            self.send_command(block_script, ignore_response=True)
+            self.send_command(block_script, ignore_response=True, wait_for_completion=True, read_timeout=60)
 
         print()
 
-        output = self.send_command("print([check for check in hash_checks if not check[1]])", ignore_response=False)
+        output = self.send_command("print([check for check in hash_checks if not check[1]])", ignore_response=False, read_timeout=30)
 
         # find first [
         start = output.find("[")

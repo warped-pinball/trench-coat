@@ -76,6 +76,60 @@ class TestGetFilesToUpdate:
         assert board.get_files_to_update([make_file("main.py", b"new contents")]) == ["/main.py"]
 
 
+class FakeSerial:
+    """Minimal stand-in for serial.Serial: records writes, replays queued reads."""
+
+    def __init__(self, responses=b""):
+        self.is_open = True
+        self.written = b""
+        self._pending = responses
+
+    @property
+    def in_waiting(self):
+        return len(self._pending)
+
+    def read(self, n):
+        data, self._pending = self._pending[:n], self._pending[n:]
+        return data
+
+    def write(self, data):
+        self.written += data
+
+    def flushInput(self):
+        self._pending = b""
+
+    def flushOutput(self):
+        pass
+
+
+class TestSendCommandWaitForCompletion:
+    def _board_with_serial(self, ser):
+        board = Ray.__new__(Ray)
+        board.port = "FAKE"
+        board.ser = ser
+        return board
+
+    def test_drains_response_until_prompt(self):
+        # Raw REPL response: OK, stdout, EOT, stderr, EOT, prompt.
+        ser = FakeSerial(b"OK[]\x04\x04>")
+        board = self._board_with_serial(ser)
+        result = board.send_command("print('x')", ignore_response=True, wait_for_completion=True, read_timeout=1)
+        assert result is None
+        assert ser.in_waiting == 0  # everything drained
+
+    def test_times_out_when_command_never_finishes(self):
+        ser = FakeSerial(b"OK")  # no completion trailer ever arrives
+        board = self._board_with_serial(ser)
+        with pytest.raises(TimeoutError):
+            board.send_command("while True: pass", ignore_response=True, wait_for_completion=True, read_timeout=0.2)
+
+    def test_ignore_response_without_wait_returns_immediately(self):
+        ser = FakeSerial()
+        board = self._board_with_serial(ser)
+        assert board.send_command("import machine", ignore_response=True) is None
+        assert ser.written.endswith(b"\x04")
+
+
 class FakePortInfo:
     def __init__(self, vid=None, hwid=""):
         self.vid = vid
