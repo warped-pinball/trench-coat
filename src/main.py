@@ -60,10 +60,26 @@ signal.signal(signal.SIGINT, signal_handler)
 
 def wait_for_one_or_more_devices():
     """
-    Wait until at least one device is connected
+    Wait until at least one device is connected.
+
+    Boards that are already plugged in are picked up immediately. Otherwise we
+    tell the user to plug in now, and after a while suggest replugging: a board
+    connected before we started listening can occasionally fail to enumerate
+    for us, and a replug reliably clears that.
     """
+    already_connected = len(Ray.find_board_ports() + list_rpi_rp2_drives())
+    if already_connected:
+        return already_connected
+
+    print("Plug in your board via USB now (do not hold the 'BOOTSEL' button).")
+    start_time = time.monotonic()
+    hint_shown = False
 
     def firmware_listen_func():
+        nonlocal hint_shown
+        if not hint_shown and (time.monotonic() - start_time) > 10:
+            print("\rStill waiting... If your board is already plugged in, unplug it and plug it back in.")
+            hint_shown = True
         print("Listening for devices (press ctrl + c to exit)", end="")
         return len(Ray.find_board_ports() + list_rpi_rp2_drives())
 
