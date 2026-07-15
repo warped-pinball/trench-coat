@@ -170,109 +170,113 @@ class Ray:
         buf = buf.decode("utf-8", errors="replace")
         return buf
 
-    def write_update_to_board(self, update_files: list[dict[str, str]]):
+    @staticmethod
+    def generate_transfer_script(files: list[dict[str, str]], progress: bool = True):
+        """Yield the MicroPython script blocks that upload ``files`` to a board.
+
+        Module-level (static) so the generated code can be unit-tested for
+        valid Python syntax without a board attached.
         """
-        Example of how we might combine the raw REPL method with chunked upload.
-        Note that if you're sending large base64 data, you might prefer
-        a different chunking approach or partial reads/writes.
-        """
+        setup_lines = [
+            "import os",
+            "import binascii",
+            "import hashlib",
+            "f = None",
+            "hash_checks = []",
+            "def w(data):",
+            "    global f",
+            "    f.write(binascii.a2b_base64(data))",
+            "    f.flush()",
+            "",
+            "def hash_check(path, expected_hash):",
+            "    try:",
+            "        sha256 = hashlib.sha256()",
+            "        with open(path, 'rb') as f:",
+            "            while True:",
+            "                chunk = f.read(1024)",
+            "                if not chunk:",
+            "                    break",
+            "                sha256.update(chunk)",
+            "        hash = binascii.hexlify(sha256.digest()).decode('utf-8')",
+            "    except Exception:",
+            "        hash = ''",
+            "    global hash_checks",
+            "    hash_checks.append((path, hash == expected_hash))",
+            "",
+            "def mdir(path):",
+            "    try:",
+            "        os.mkdir(path)",
+            "    except OSError:",
+            "        pass",
+            "",
+            "def execute_file(path):",
+            "    module_path = path.replace('/', '.').replace('.py', '')",
+            "    if module_path.startswith('.'):",
+            "        module_path = module_path[1:]",
+            "    try:",
+            "        imported_module = __import__(module_path)",
+            "        if hasattr(imported_module, 'main'):",
+            "            imported_module.main()",
+            "    except Exception as e:",
+            "        print('Error message:', str(e))",
+            "        print('Error executing file:', path)",
+            "    try:",
+            "        os.remove(path)",
+            "    except OSError:",
+            "        pass",  # file probably removed itself
+        ]
 
-        def generate_transfer_script(files: list[dict[str, str]]):
-            setup_lines = [
-                "import os",
-                "import binascii",
-                "import hashlib",
-                "f = None",
-                "hash_checks = []",
-                "def w(data):",
-                "    global f",
-                "    f.write(binascii.a2b_base64(data))",
-                "    f.flush()",
-                "",
-                "def hash_check(path, expected_hash):",
-                "    try:",
-                "        sha256 = hashlib.sha256()",
-                "        with open(path, 'rb') as f:",
-                "            while True:",
-                "                chunk = f.read(1024)",
-                "                if not chunk:",
-                "                    break",
-                "                sha256.update(chunk)",
-                "        hash = binascii.hexlify(sha256.digest()).decode('utf-8')",
-                "    except Exception:",
-                "        hash = ''",
-                "    global hash_checks",
-                "    hash_checks.append((path, hash == expected_hash))",
-                "",
-                "def mdir(path):",
-                "    try:",
-                "        os.mkdir(path)",
-                "    except OSError:",
-                "        pass",
-                "",
-                "def execute_file(path):",
-                "    module_path = path.replace('/', '.').replace('.py', '')",
-                "    if module_path.startswith('.'):",
-                "        module_path = module_path[1:]",
-                "    try:",
-                "        imported_module = __import__(module_path)",
-                "        if hasattr(imported_module, 'main'):",
-                "            imported_module.main()",
-                "    except Exception as e:",
-                "        print('Error message:', str(e))",
-                "        print('Error executing file:', path)",
-                "    try:" "        os.remove(path)",
-                "    except OSError:",
-                "        pass",  # file probably removed itself
-            ]
+        yield "\n".join(setup_lines)
 
-            yield "\n".join(setup_lines)
-
-            for i, file_info in enumerate(files):
-                # Print progress
+        for i, file_info in enumerate(files):
+            # Print progress
+            if progress:
                 print(f"Uploading file {i + 1} of {len(files)}: {file_info['filename']}" + " " * 20, end="\r")
 
-                filename = file_info["filename"]
-                file_metadata = file_info["metadata"]
-                file_contents = file_info["base64_contents"]
+            filename = file_info["filename"]
+            file_metadata = file_info["metadata"]
+            file_contents = file_info["base64_contents"]
 
-                if not filename:
-                    raise ValueError(f"Missing filename in {file_info}")
+            if not filename:
+                raise ValueError(f"Missing filename in {file_info}")
 
-                # For consistency, we always use a leading slash
-                if not filename.startswith("/"):
-                    filename = "/" + filename
+            # For consistency, we always use a leading slash
+            if not filename.startswith("/"):
+                filename = "/" + filename
 
-                dir_path = os.path.dirname(filename)
-                if dir_path not in ["", "/"]:
-                    yield f"mdir('{dir_path}')"
+            dir_path = os.path.dirname(filename)
+            if dir_path not in ["", "/"]:
+                yield f"mdir('{dir_path}')"
 
-                yield f"f = open('{filename}', 'wb')"
+            yield f"f = open('{filename}', 'wb')"
 
-                # Process base64 data in chunks
-                chunk_size = COMMAND_CHUNK_SIZE - 20
-                for i in range(0, len(file_contents), chunk_size):
-                    chunk = file_contents[i : i + chunk_size]
-                    yield f"w('{chunk}')"
+            # Process base64 data in chunks
+            chunk_size = COMMAND_CHUNK_SIZE - 20
+            for i in range(0, len(file_contents), chunk_size):
+                chunk = file_contents[i : i + chunk_size]
+                yield f"w('{chunk}')"
 
-                yield "f.close()"
+            yield "f.close()"
 
-                # calculate the checksum based on the file contents
-                hasher = hashlib.sha256()
-                decoded_contents = base64.b64decode(file_contents)
-                hasher.update(decoded_contents)
-                expected_hash = hasher.hexdigest()
+            # calculate the checksum based on the file contents
+            hasher = hashlib.sha256()
+            decoded_contents = base64.b64decode(file_contents)
+            hasher.update(decoded_contents)
+            expected_hash = hasher.hexdigest()
 
-                yield f"hash_check('{filename}', '{expected_hash}')"
-                # If the file is marked as executable, run it
-                if file_metadata.get("execute", False):
-                    yield f"execute_file('{filename}')"
+            yield f"hash_check('{filename}', '{expected_hash}')"
+            # If the file is marked as executable, run it
+            if file_metadata.get("execute", False):
+                yield f"execute_file('{filename}')"
 
+    def write_update_to_board(self, update_files: list[dict[str, str]]):
+        """Upload the given update files to the board over the raw REPL,
+        then verify every file's SHA256 on the board."""
         # figure out what files need to be updated
         required_files = self.get_files_to_update(update_files)
 
         # Generate the script lines in a generator
-        script_lines = generate_transfer_script([file_info for file_info in update_files if file_info["filename"] in required_files or file_info["metadata"].get("execute", False)])
+        script_lines = self.generate_transfer_script([file_info for file_info in update_files if file_info["filename"] in required_files or file_info["metadata"].get("execute", False)])
         current_block = []
         current_len = 0
 
