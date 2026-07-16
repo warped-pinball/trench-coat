@@ -343,7 +343,7 @@ class Ray:
         """
         self.send_command("import machine\nmachine.reset()", ignore_response=True)
 
-    def _exec_value(self, script: list[str], timeout: float | None = None) -> str:
+    def _exec_value(self, script: list[str], timeout=None) -> str:
         """
         Run a script on the board that prints a single value wrapped in
         ``<<<`` / ``>>>`` markers, and return the text between the markers.
