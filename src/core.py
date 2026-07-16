@@ -343,6 +343,15 @@ def flash_software(software):
         update_files = get_files_from_update_file(software)
         for i, board in enumerate(boards):
             print(f"Flashing software to {board.port} ({i+1} of {len(ports)})")
+            # A board that was just firmware-flashed re-enumerates its serial
+            # port seconds before its application finishes booting. Wait for the
+            # REPL to actually respond before uploading, otherwise the first
+            # command (the SHA256 index) fires into a still-booting board and
+            # hangs with no output.
+            if not board.wait_until_ready(on_wait=lambda b=board: print(f"  {b.port}: waiting for the board to finish booting (this can take up to a minute)...")):
+                print(f"  {board.port}: board never became ready for software flashing.")
+                print("     Try unplugging and replugging this board, then run the program again.")
+                graceful_exit()
             # Copy files to the board
             board.write_update_to_board(update_files)
 

@@ -130,6 +130,60 @@ class TestSendCommandWaitForCompletion:
         assert ser.written.endswith(b"\x04")
 
 
+class TestReplReadiness:
+    def _bare_board(self):
+        board = Ray.__new__(Ray)
+        board.port = "FAKE"
+        return board
+
+    def test_is_repl_responsive_true(self, monkeypatch):
+        board = self._bare_board()
+        monkeypatch.setattr(board, "_exec_value", lambda script, timeout: "rdy", raising=False)
+        assert board.is_repl_responsive() is True
+
+    def test_is_repl_responsive_false_on_wrong_output(self, monkeypatch):
+        board = self._bare_board()
+        monkeypatch.setattr(board, "_exec_value", lambda script, timeout: "", raising=False)
+        assert board.is_repl_responsive() is False
+
+    def test_is_repl_responsive_false_on_exception(self, monkeypatch):
+        board = self._bare_board()
+
+        def boom(script, timeout):
+            raise TimeoutError("no OK")
+
+        monkeypatch.setattr(board, "_exec_value", boom, raising=False)
+        assert board.is_repl_responsive() is False
+
+    def test_wait_until_ready_returns_true_immediately(self, monkeypatch):
+        board = self._bare_board()
+        monkeypatch.setattr(board, "is_repl_responsive", lambda: True, raising=False)
+        called = []
+        assert board.wait_until_ready(on_wait=lambda: called.append(1)) is True
+        assert called == []  # never had to tell the user we were waiting
+
+    def test_wait_until_ready_retries_then_succeeds(self, monkeypatch):
+        board = self._bare_board()
+        responses = iter([False, False, True])
+        monkeypatch.setattr(board, "is_repl_responsive", lambda: next(responses), raising=False)
+        drops = []
+        monkeypatch.setattr(board, "_drop_serial", lambda: drops.append(1), raising=False)
+        monkeypatch.setattr("src.ray.time.sleep", lambda s: None)
+        waited = []
+        assert board.wait_until_ready(on_wait=lambda: waited.append(1)) is True
+        assert waited == [1]  # on_wait fires exactly once
+        assert len(drops) == 2  # connection dropped before each retry
+
+    def test_wait_until_ready_times_out(self, monkeypatch):
+        board = self._bare_board()
+        monkeypatch.setattr(board, "is_repl_responsive", lambda: False, raising=False)
+        monkeypatch.setattr(board, "_drop_serial", lambda: None, raising=False)
+        monkeypatch.setattr("src.ray.time.sleep", lambda s: None)
+        clock = {"t": 0.0}
+        monkeypatch.setattr("src.ray.time.monotonic", lambda: clock.__setitem__("t", clock["t"] + 0.5) or clock["t"])
+        assert board.wait_until_ready(timeout=1.0) is False
+
+
 class FakePortInfo:
     def __init__(self, vid=None, hwid=""):
         self.vid = vid

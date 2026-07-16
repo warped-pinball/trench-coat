@@ -338,6 +338,63 @@ class Ray:
 
         raise ValueError(f"Board failed to upload files: {output}")
 
+    def _drop_serial(self):
+        """Close the underlying serial handle without de-registering the
+        instance, so the next command opens a fresh connection.
+
+        A half-failed raw-REPL handshake can leave the port in a state where
+        subsequent reads never see the expected response; reopening from
+        scratch reliably clears that.
+        """
+        try:
+            if getattr(self, "ser", None):
+                self.ser.close()
+        except Exception:
+            pass
+
+    def is_repl_responsive(self, timeout: float = 3.0) -> bool:
+        """Return True if the board answers a trivial raw-REPL command within
+        ``timeout`` seconds.
+
+        Used to tell whether a board has finished booting its application and
+        dropped to a usable REPL. Any failure (port not openable, no ``OK``
+        within the timeout, unexpected output) is reported as "not ready".
+        """
+        try:
+            return self._exec_value(["print('<<<' + 'rdy' + '>>>')"], timeout) == "rdy"
+        except Exception:
+            return False
+
+    def wait_until_ready(self, timeout: float = 60.0, delay: float = 0.5, on_wait=None) -> bool:
+        """Wait until the board's REPL answers, retrying on a wall-clock deadline.
+
+        A board that was just firmware-flashed re-enumerates its USB serial
+        port seconds before the Vector application finishes booting, and while
+        boot code is still running the REPL does not answer the raw-REPL
+        handshake. Firing a command at it in that window (e.g. the SHA256 index
+        that starts a software flash) blocks forever waiting for a response
+        that never comes.
+
+        We therefore probe the REPL repeatedly until it responds or the
+        deadline passes, dropping the serial connection between attempts (a
+        half-failed handshake can leave the port unusable). ``on_wait`` is
+        called once, after the first failed attempt, so callers can tell the
+        user why flashing is taking a moment. Returns True once the board
+        responds, or False if the deadline passes first.
+        """
+        deadline = time.monotonic() + timeout
+        waiting_reported = False
+        while True:
+            if self.is_repl_responsive():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            if on_wait is not None and not waiting_reported:
+                on_wait()
+                waiting_reported = True
+            self._drop_serial()
+            time.sleep(delay)
+
     def enter_bootloader_mode(self):
         """
         Reset the board into the UF2 bootloader (might need physically to reset on some boards).
@@ -504,7 +561,10 @@ class Ray:
             "",
             "print(json.dumps(files))",
         ]
-        output = self.send_command(script_lines)
+        # Bound the read so a board that is not actually at a usable REPL
+        # (e.g. still booting its application) surfaces as a TimeoutError
+        # instead of hanging this call forever.
+        output = self.send_command(script_lines, read_timeout=120)
 
         # remove anything before first { or after last }
         start = output.find("{")
