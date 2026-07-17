@@ -35,6 +35,8 @@ _CODES = {
     "yellow": "\033[33m",
     "cyan": "\033[36m",
     "gray": "\033[90m",
+    "on_green": "\033[42m",
+    "black": "\033[30m",
 }
 
 
@@ -137,6 +139,21 @@ def warning(text: str, indent: int = 1) -> None:
 
 def error(text: str, indent: int = 1) -> None:
     print(f"{INDENT * indent}{_c(_SYM_ERR, 'red')} {_c(text, 'red')}")
+
+
+def done(text: str) -> None:
+    """A prominent, highlighted completion banner, set off by blank lines.
+
+    Rendered as bold text on a green background when color is available, and
+    as a plain bracketed banner otherwise, so success is unmistakable.
+    """
+    print()
+    label = f" {_SYM_OK}  {text} "
+    if _COLOR:
+        print(_c(label, "bold", "black", "on_green"))
+    else:
+        print(f"=== {text} ===")
+    print()
 
 
 def plain(text: str = "", indent: int = 0) -> None:

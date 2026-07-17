@@ -179,6 +179,29 @@ def report_and_guard_boards(firmware):
     return True, infos
 
 
+def prompt_next_action():
+    """Ask the user what to do after a successful flash.
+
+    Returns one of:
+      - ``"again"``:       flash more boards with the same firmware/software
+      - ``"reconfigure"``: pick a different game series / software, then flash
+      - ``"quit"``:        exit the program
+    """
+    same = "Flash more boards with the same settings"
+    change = "Change settings (game series / software), then flash"
+    quit_ = "Quit"
+    choice = inquirer.select(
+        message="Flashing complete. What would you like to do next?",
+        choices=[same, change, quit_],
+        default=same,
+    ).execute()
+    if choice == change:
+        return "reconfigure"
+    if choice == quit_:
+        return "quit"
+    return "again"
+
+
 def select_devices() -> list[Ray]:
     ports = Ray.find_board_ports()
 

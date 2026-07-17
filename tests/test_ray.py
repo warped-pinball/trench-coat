@@ -190,6 +190,51 @@ class TestSendCommandResponse:
         with pytest.raises(TimeoutError):
             board.send_command("print('x')", read_timeout=0.2)
 
+    def test_partition_never_raises_on_odd_framing(self):
+        # Even with an unexpected single trailing marker the reader must return
+        # a string rather than raise (partition, not split-and-index).
+        board = self._board_with_serial(ResponderSerial([b"OKweird\x04\x04"]))
+        assert board.send_command("print('weird')", read_timeout=1) == "weird"
+
+
+class TestReadWithRetry:
+    def _bare_board(self):
+        board = Ray.__new__(Ray)
+        board.port = "FAKE"
+        return board
+
+    def test_retries_after_transient_timeout(self, monkeypatch):
+        board = self._bare_board()
+        calls = {"n": 0}
+
+        def flaky(script, ignore_response=False, read_timeout=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise TimeoutError("transient no-response")
+            return "[]"
+
+        drops = []
+        monkeypatch.setattr(board, "send_command", flaky, raising=False)
+        monkeypatch.setattr(board, "_drop_serial", lambda: drops.append(1), raising=False)
+        monkeypatch.setattr("src.ray.time.sleep", lambda s: None)
+
+        assert board._read_with_retry("print([])", read_timeout=30) == "[]"
+        assert calls["n"] == 2  # first failed, second succeeded
+        assert len(drops) == 1  # dropped the connection before the retry
+
+    def test_raises_after_exhausting_attempts(self, monkeypatch):
+        board = self._bare_board()
+
+        def always_timeout(script, ignore_response=False, read_timeout=None):
+            raise TimeoutError("no-response")
+
+        monkeypatch.setattr(board, "send_command", always_timeout, raising=False)
+        monkeypatch.setattr(board, "_drop_serial", lambda: None, raising=False)
+        monkeypatch.setattr("src.ray.time.sleep", lambda s: None)
+
+        with pytest.raises(TimeoutError):
+            board._read_with_retry("print([])", read_timeout=1, attempts=3)
+
 
 class TestReplReadiness:
     def _bare_board(self):

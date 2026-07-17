@@ -199,10 +199,33 @@ class Ray:
         # Split out stdout and stderr (each terminated by an EOT marker) and
         # return them joined. Callers extract their payload with find()/rfind(),
         # and keeping stderr means a board-side traceback still shows up in the
-        # error messages they raise.
-        parts = buf.split(b"\x04")
-        stdout, stderr = parts[0], parts[1]
+        # error messages they raise. partition() is used (rather than indexing a
+        # split) so this can never raise even if the framing is unexpected.
+        stdout, _, rest = buf.partition(b"\x04")
+        stderr = rest.partition(b"\x04")[0]
         return (stdout + stderr).decode("utf-8", errors="replace")
+
+    def _read_with_retry(self, script, read_timeout=None, attempts=3) -> str:
+        """Run an *idempotent* read-only command, retrying on a transient
+        no-response.
+
+        Only use this for commands that just print board state and can safely
+        be re-run (never for uploads or ``execute_file`` blocks). Between
+        attempts the serial handle is dropped so the next call reopens from
+        scratch and re-enters the raw REPL, which clears any half-read framing
+        left by the timed-out attempt. The board's REPL globals survive that
+        reconnect, so the re-run sees the same state.
+        """
+        last_err = None
+        for attempt in range(attempts):
+            try:
+                return self.send_command(script, ignore_response=False, read_timeout=read_timeout)
+            except TimeoutError as e:
+                last_err = e
+                if attempt < attempts - 1:
+                    self._drop_serial()
+                    time.sleep(0.2)
+        raise last_err
 
     @staticmethod
     def generate_transfer_script(files: list[dict[str, str]], progress: bool = True):
@@ -333,7 +356,12 @@ class Ray:
 
         print()
 
-        output = self.send_command("print([check for check in hash_checks if not check[1]])", ignore_response=False, read_timeout=30)
+        # Ask the board which hash checks failed. This read comes right after a
+        # long burst of uploads and is the single spot most exposed to a rare,
+        # transient USB stall, so give it a few attempts before giving up. The
+        # command only prints existing board state (``hash_checks`` persists in
+        # the REPL globals across the reconnect), so it is safe to repeat.
+        output = self._read_with_retry("print([check for check in hash_checks if not check[1]])", read_timeout=30)
 
         # find first [
         start = output.find("[")

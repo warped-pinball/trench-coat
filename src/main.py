@@ -15,6 +15,7 @@ from src.core import (
 )
 from src.interactive import (
     display_welcome,
+    prompt_next_action,
     report_and_guard_boards,
     select_firmware_and_system,
     select_software,
@@ -106,14 +107,18 @@ def wait_for_n_devices(n):
     return len(Ray.find_board_ports() + list_rpi_rp2_drives())
 
 
-def main():
-    args = parse_arguments()
-    display_welcome()
+def choose_firmware_and_software(args):
+    """Resolve which firmware and software to flash, prompting as needed.
 
-    # Firmware / game-series selection. A series determines both the OS firmware
-    # and the software; several series can share an OS (EM runs on the WPC OS),
-    # so the system id is carried explicitly rather than re-inferred from the
-    # firmware filename.
+    Returns ``(firmware, system, software)``. A series determines both the OS
+    firmware and the software; several series can share an OS (EM runs on the
+    WPC OS), so the system id is carried explicitly rather than re-inferred
+    from the firmware filename. The software update file is system-specific
+    (WPC, EM, Data East, Sys11, ...):
+      - explicit --software: use it as-is
+      - series selected: pick the asset for that system up front
+      - --skip-firmware: defer until we can read the system from the board
+    """
     firmware = None
     system = None
     if not args.skip_firmware:
@@ -123,14 +128,18 @@ def main():
         else:
             firmware, system = select_firmware_and_system()
 
-    # Resolve which software update to flash. The update file is system-specific
-    # (WPC, EM, Data East, Sys11, ...):
-    #   - explicit --software: use it as-is
-    #   - series selected: pick the asset for that system up front
-    #   - --skip-firmware: defer until we can read the system from the board
     software = args.software
     if software is None and system is not None:
         software = select_software(system)
+
+    return firmware, system, software
+
+
+def main():
+    args = parse_arguments()
+    display_welcome()
+
+    firmware, system, software = choose_firmware_and_software(args)
 
     # flash devices until user cancels
     while True:
@@ -153,14 +162,24 @@ def main():
 
         flash_software(software)
 
+        # highlighted, unmistakable "we're done" banner
+        ui.done("Flashing complete - safe to install this board.")
+
         # if once argument is passed, exit loop immediately
         if args.once:
             break
 
-        # wait until all have restarted
-        wait_for_n_devices(total_boards)
+        # Offer to flash more boards (same settings), reconfigure, or quit.
+        action = prompt_next_action()
+        if action == "quit":
+            graceful_exit()
+        if action == "reconfigure":
+            firmware, system, software = choose_firmware_and_software(args)
 
-        # wait until all devices disconnect
+        # wait until all have restarted, then until they're unplugged so the
+        # next set of boards can be swapped in
+        wait_for_n_devices(total_boards)
+        ui.step("Disconnect the flashed board(s), then plug in the next set.")
         wait_for_zero_devices()
 
     if args.listen_after:
