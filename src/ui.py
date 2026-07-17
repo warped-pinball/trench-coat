@@ -37,6 +37,7 @@ _CODES = {
     "gray": "\033[90m",
     "on_green": "\033[42m",
     "black": "\033[30m",
+    "white": "\033[97m",
 }
 
 
@@ -150,7 +151,7 @@ def done(text: str) -> None:
     print()
     label = f" {_SYM_OK}  {text} "
     if _COLOR:
-        print(_c(label, "bold", "black", "on_green"))
+        print(_c(label, "bold", "white", "on_green"))
     else:
         print(f"=== {text} ===")
     print()
