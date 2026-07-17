@@ -7,6 +7,8 @@ import time
 import serial
 import serial.tools.list_ports
 
+from src import ui
+
 PICO_VID = 0x2E8A
 PICO_PID = 0x0005  # MicroPython CDC (typical, but we match on VID alone)
 COMMAND_CHUNK_SIZE = 5000
@@ -158,40 +160,72 @@ class Ray:
                     raise TimeoutError(f"Board on {self.port} did not finish command within {read_timeout}s")
                 time.sleep(0.01)
 
-        # read in the initial "OK" response
+        # Read the raw-REPL response. After executing the command the board
+        # emits:  OK <stdout> \x04 <stderr> \x04 >
+        # We first wait for the "OK" acknowledgement, then keep reading until
+        # both EOT (0x04) markers have arrived.
+        #
+        # Reading to the EOT markers -- rather than the old "wait for data, then
+        # read until the stream goes idle for a second" heuristic -- is what
+        # makes this reliable when the board coalesces "OK" and the whole
+        # response into a single USB packet. That happens for short responses
+        # (e.g. the final hash-check line, which is usually just "[]") and is
+        # timing dependent, so it surfaced on the slower Pico W (rp2040) while
+        # the Pico 2 W (rp2350) happened to split them across reads. In the
+        # coalesced case the old code consumed everything while looking for
+        # "OK", then blocked forever in "wait until we have data" because the
+        # buffer was already drained -- the 30s timeout the user hit.
         buf = b""
-        while True:
+        while b"OK" not in buf:
             if self.ser.in_waiting > 0:
-                chunk = self.ser.read(self.ser.in_waiting)
-                if b"OK" in chunk:
-                    # add anything after the OK to the buffer
-                    buf += chunk[chunk.index(b"OK") + 2 :]
-                    break
-            if deadline is not None and time.time() > deadline:
+                buf += self.ser.read(self.ser.in_waiting)
+            elif deadline is not None and time.time() > deadline:
                 raise TimeoutError(f"No 'OK' response from board on {self.port} within {read_timeout}s")
-            time.sleep(0.01)
-
-        # wait until we have data in the input buffer
-        while self.ser.in_waiting == 0:
-            if deadline is not None and time.time() > deadline:
-                raise TimeoutError(f"No output from board on {self.port} within {read_timeout}s")
-            time.sleep(0.01)
-
-        # read all until it's been idle for 1 second
-        start_time = time.time()
-        while True:
-            if self.ser.in_waiting > 0:
-                chunk = self.ser.read(self.ser.in_waiting)
-                buf += chunk
-                start_time = time.time()
             else:
-                if time.time() - start_time > 1.0:
-                    break
-            time.sleep(0.01)
+                time.sleep(0.01)
 
-        # encode and return the output
-        buf = buf.decode("utf-8", errors="replace")
-        return buf
+        # Drop everything up to and including the "OK" acknowledgement.
+        buf = buf[buf.index(b"OK") + 2 :]
+
+        # Read until both the stdout and stderr EOT markers have arrived.
+        while buf.count(b"\x04") < 2:
+            if self.ser.in_waiting > 0:
+                buf += self.ser.read(self.ser.in_waiting)
+            elif deadline is not None and time.time() > deadline:
+                raise TimeoutError(f"No output from board on {self.port} within {read_timeout}s")
+            else:
+                time.sleep(0.01)
+
+        # Split out stdout and stderr (each terminated by an EOT marker) and
+        # return them joined. Callers extract their payload with find()/rfind(),
+        # and keeping stderr means a board-side traceback still shows up in the
+        # error messages they raise. partition() is used (rather than indexing a
+        # split) so this can never raise even if the framing is unexpected.
+        stdout, _, rest = buf.partition(b"\x04")
+        stderr = rest.partition(b"\x04")[0]
+        return (stdout + stderr).decode("utf-8", errors="replace")
+
+    def _read_with_retry(self, script, read_timeout=None, attempts=3) -> str:
+        """Run an *idempotent* read-only command, retrying on a transient
+        no-response.
+
+        Only use this for commands that just print board state and can safely
+        be re-run (never for uploads or ``execute_file`` blocks). Between
+        attempts the serial handle is dropped so the next call reopens from
+        scratch and re-enters the raw REPL, which clears any half-read framing
+        left by the timed-out attempt. The board's REPL globals survive that
+        reconnect, so the re-run sees the same state.
+        """
+        last_err = None
+        for attempt in range(attempts):
+            try:
+                return self.send_command(script, ignore_response=False, read_timeout=read_timeout)
+            except TimeoutError as e:
+                last_err = e
+                if attempt < attempts - 1:
+                    self._drop_serial()
+                    time.sleep(0.2)
+        raise last_err
 
     @staticmethod
     def generate_transfer_script(files: list[dict[str, str]], progress: bool = True):
@@ -254,7 +288,7 @@ class Ray:
         for i, file_info in enumerate(files):
             # Print progress
             if progress:
-                print(f"Uploading file {i + 1} of {len(files)}: {file_info['filename']}" + " " * 20, end="\r")
+                print(ui.status(f"uploading file {i + 1} of {len(files)}: {file_info['filename']}", indent=2) + " " * 20, end="\r")
 
             filename = file_info["filename"]
             file_metadata = file_info["metadata"]
@@ -322,7 +356,12 @@ class Ray:
 
         print()
 
-        output = self.send_command("print([check for check in hash_checks if not check[1]])", ignore_response=False, read_timeout=30)
+        # Ask the board which hash checks failed. This read comes right after a
+        # long burst of uploads and is the single spot most exposed to a rare,
+        # transient USB stall, so give it a few attempts before giving up. The
+        # command only prints existing board state (``hash_checks`` persists in
+        # the REPL globals across the reconnect), so it is safe to repeat.
+        output = self._read_with_retry("print([check for check in hash_checks if not check[1]])", read_timeout=30)
 
         # find first [
         start = output.find("[")
@@ -333,10 +372,67 @@ class Ray:
         # remove anything before first [ or after last ]
         output = output[start : end + 1].strip()
         if output == "[]":
-            print("All files uploaded successfully.")
+            ui.detail("all files verified on board", indent=2)
             return
 
         raise ValueError(f"Board failed to upload files: {output}")
+
+    def _drop_serial(self):
+        """Close the underlying serial handle without de-registering the
+        instance, so the next command opens a fresh connection.
+
+        A half-failed raw-REPL handshake can leave the port in a state where
+        subsequent reads never see the expected response; reopening from
+        scratch reliably clears that.
+        """
+        try:
+            if getattr(self, "ser", None):
+                self.ser.close()
+        except Exception:
+            pass
+
+    def is_repl_responsive(self, timeout: float = 3.0) -> bool:
+        """Return True if the board answers a trivial raw-REPL command within
+        ``timeout`` seconds.
+
+        Used to tell whether a board has finished booting its application and
+        dropped to a usable REPL. Any failure (port not openable, no ``OK``
+        within the timeout, unexpected output) is reported as "not ready".
+        """
+        try:
+            return self._exec_value(["print('<<<' + 'rdy' + '>>>')"], timeout) == "rdy"
+        except Exception:
+            return False
+
+    def wait_until_ready(self, timeout: float = 60.0, delay: float = 0.5, on_wait=None) -> bool:
+        """Wait until the board's REPL answers, retrying on a wall-clock deadline.
+
+        A board that was just firmware-flashed re-enumerates its USB serial
+        port seconds before the Vector application finishes booting, and while
+        boot code is still running the REPL does not answer the raw-REPL
+        handshake. Firing a command at it in that window (e.g. the SHA256 index
+        that starts a software flash) blocks forever waiting for a response
+        that never comes.
+
+        We therefore probe the REPL repeatedly until it responds or the
+        deadline passes, dropping the serial connection between attempts (a
+        half-failed handshake can leave the port unusable). ``on_wait`` is
+        called once, after the first failed attempt, so callers can tell the
+        user why flashing is taking a moment. Returns True once the board
+        responds, or False if the deadline passes first.
+        """
+        deadline = time.monotonic() + timeout
+        waiting_reported = False
+        while True:
+            if self.is_repl_responsive():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            if on_wait is not None and not waiting_reported:
+                on_wait()
+                waiting_reported = True
+            self._drop_serial()
+            time.sleep(delay)
 
     def enter_bootloader_mode(self):
         """
@@ -504,7 +600,10 @@ class Ray:
             "",
             "print(json.dumps(files))",
         ]
-        output = self.send_command(script_lines)
+        # Bound the read so a board that is not actually at a usable REPL
+        # (e.g. still booting its application) surfaces as a TimeoutError
+        # instead of hanging this call forever.
+        output = self.send_command(script_lines, read_timeout=120)
 
         # remove anything before first { or after last }
         start = output.find("{")

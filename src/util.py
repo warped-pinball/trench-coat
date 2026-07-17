@@ -33,7 +33,8 @@ def wait_for(listen_func, timeout=10):
             dots = (dots + 1) % 5
             print("\r", end="")
             return_val = listen_func()
-            print("." * dots + " " * (5 - dots), end="")
+            # Trailing padding clears the dots from the previous, longer redraw.
+            print("." * dots + " " * (5 - dots), end="", flush=True)
             if return_val:
                 print()
                 break

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 
+from src import ui
 from src.ray import Ray
 from src.util import graceful_exit, wait_for
 
@@ -18,15 +19,15 @@ def get_all_boards_into_bootloader():
     # get all bootloader drives
     bootloader_drives = list_rpi_rp2_drives()
     initial_drives = len(bootloader_drives)
-    print(f"Found {len(bootloader_drives)} devices already in bootloader mode.")
+    ui.step(f"{len(bootloader_drives)} device(s) already in bootloader mode")
 
     # Find all connected devices
     ports = Ray.find_board_ports()
     initial_ports = len(ports)
-    print(f"Found {len(ports)} devices not already in bootloader mode.")
+    ui.step(f"{len(ports)} device(s) running, need a reset into bootloader mode")
     for port in ports:
         # Put the board in bootloader mode
-        print(f"Putting {port} into bootloader mode...")
+        ui.detail(f"resetting {port} into bootloader mode...")
         Ray(port).enter_bootloader_mode()
 
     expected_drive_count = initial_drives + initial_ports
@@ -34,7 +35,7 @@ def get_all_boards_into_bootloader():
     # Wait for bootloader drives to appear
     def wait_for_bootloader():
         drives = list_rpi_rp2_drives()
-        print(f"Waiting for  ({len(drives)} of {expected_drive_count}) devices to appear in bootloader mode", end="")
+        print(ui.status(f"waiting for ({len(drives)} of {expected_drive_count}) device(s) to appear in bootloader mode"), end="")
         return len(drives) >= expected_drive_count
 
     wait_for(wait_for_bootloader, timeout=60)
@@ -42,6 +43,7 @@ def get_all_boards_into_bootloader():
 
 def flash_firmware(firmware_path):
     """Core function to flash firmware to devices"""
+    ui.heading("Flashing firmware")
     get_all_boards_into_bootloader()
 
     # Get the updated list of bootloader drives
@@ -50,7 +52,7 @@ def flash_firmware(firmware_path):
     # wipe the board with nuke.uf2
     nuke_path = [path for path in list_bundled_uf2() if "nuke.uf2" in path]
     if not nuke_path:
-        print("Error: nuke.uf2 not found in bundled UF2 files.")
+        ui.error("nuke.uf2 not found in bundled UF2 files.")
         graceful_exit()
     nuke_path = nuke_path[0]
 
@@ -58,7 +60,7 @@ def flash_firmware(firmware_path):
     time.sleep(5)
 
     for drive in bootloader_drives:
-        print(f"Flashing {os.path.basename(nuke_path)} to {drive}")
+        ui.step(f"wiping {drive} with {os.path.basename(nuke_path)}")
         shutil.copy(nuke_path, drive)
         try:
             os.sync()
@@ -69,7 +71,7 @@ def flash_firmware(firmware_path):
     # Wait for the drives to start executing uf2s
     def wait_for_flash():
         drives = list_rpi_rp2_drives()
-        print(f"Waiting for ({len(bootloader_drives) - len(drives)} of {len(bootloader_drives)}) devices to begin flashing", end="")
+        print(ui.status(f"waiting for ({len(bootloader_drives) - len(drives)} of {len(bootloader_drives)}) device(s) to begin flashing"), end="")
         return len(drives) < len(bootloader_drives)
 
     wait_for(wait_for_flash, timeout=60)
@@ -77,7 +79,7 @@ def flash_firmware(firmware_path):
     # Wait for the drives to reappear after nuking
     def wait_for_reappear():
         drives = list_rpi_rp2_drives()
-        print(f"Waiting for ({len(drives)} of {len(bootloader_drives)}) devices to enter bootloader mode", end="")
+        print(ui.status(f"waiting for ({len(drives)} of {len(bootloader_drives)}) device(s) to re-enter bootloader mode"), end="")
         return len(drives) >= len(bootloader_drives)
 
     wait_for(wait_for_reappear, timeout=60)
@@ -91,7 +93,7 @@ def flash_firmware(firmware_path):
     time.sleep(5)
 
     for drive in bootloader_drives:
-        print(f"Flashing {os.path.basename(firmware_path)} to {drive}")
+        ui.step(f"flashing {os.path.basename(firmware_path)} to {drive}")
         shutil.copy(firmware_path, drive)
         try:
             os.sync()
@@ -102,22 +104,22 @@ def flash_firmware(firmware_path):
     # Wait for the drives to reappear as Ray devices
     def wait_for_rpi_rp2():
         boards = Ray.find_board_ports()
-        print(f"Waiting for ({len(boards)} of {len(bootloader_drives)}) boards to restart", end="")
+        print(ui.status(f"waiting for ({len(boards)} of {len(bootloader_drives)}) board(s) to restart"), end="")
         return len(boards) >= len(bootloader_drives)
 
     try:
         wait_for(wait_for_rpi_rp2, timeout=60)
     except TimeoutError:
-        msg = [
-            "Please try running the program again.",
-            "If this issue persists:",
-            "    1. eject / safely remove all drives mounted in the process. They will all contain a file called 'INFO_UF2.TXT'",
-            "    2. unplug all devices from the computer and wait for 10 seconds",
-            "    3. plug the devices back in and run the program again",
-            "    4. if the issue persists, please reachout for help",
-        ]
-        print("\n" + "\n".join(msg))
+        ui.error("Boards did not restart after firmware flashing.")
+        ui.detail("Please try running the program again.", indent=1)
+        ui.detail("If this issue persists:", indent=1)
+        ui.detail("1. eject / safely remove all drives mounted in the process. They will all contain a file called 'INFO_UF2.TXT'", indent=2)
+        ui.detail("2. unplug all devices from the computer and wait for 10 seconds", indent=2)
+        ui.detail("3. plug the devices back in and run the program again", indent=2)
+        ui.detail("4. if the issue persists, please reach out for help", indent=2)
         graceful_exit()
+    else:
+        ui.success("Firmware flashed.")
 
 
 def list_bundled_uf2():
@@ -321,30 +323,42 @@ def list_rpi_rp2_drives():
 # Software flashing functions
 #
 def flash_software(software):
+    ui.heading("Flashing software")
+
     # confirm known update format
     with open(software, "r") as f:
         software_metadata = json.loads(f.readline())
         if "update_file_format" not in software_metadata:
-            print("Error: file format not specified in update.json.")
+            ui.error("file format not specified in update.json.")
             sys.exit(1)
         if software_metadata["update_file_format"] != "1.0":
-            print("Error: update.json file format not recognized. Check for more recent versions of this program.")
+            ui.error("update.json file format not recognized. Check for more recent versions of this program.")
             sys.exit(1)
-    print("Software file format confirmed.")
+    ui.step("software file format confirmed")
 
     # Create a temporary directory for extracted files
     extract_dir = tempfile.mkdtemp(prefix="software_update_")
-    print(f"Extracting files to temporary directory: {extract_dir}")
+    ui.detail(f"extracting files to temporary directory: {extract_dir}")
 
     try:
         ports = Ray.find_board_ports()
-        print(f"Found {len(ports)} devices to flash software to.")
+        ui.step(f"found {len(ports)} device(s) to flash software to")
         boards = [Ray(port) for port in ports]
         update_files = get_files_from_update_file(software)
         for i, board in enumerate(boards):
-            print(f"Flashing software to {board.port} ({i+1} of {len(ports)})")
+            ui.step(f"flashing {board.port} ({i + 1} of {len(ports)})")
+            # A board that was just firmware-flashed re-enumerates its serial
+            # port seconds before its application finishes booting. Wait for the
+            # REPL to actually respond before uploading, otherwise the first
+            # command (the SHA256 index) fires into a still-booting board and
+            # hangs with no output.
+            if not board.wait_until_ready(on_wait=lambda b=board: ui.detail(f"{b.port}: waiting for the board to finish booting (this can take up to a minute)...")):
+                ui.error(f"{board.port}: board never became ready for software flashing.", indent=2)
+                ui.detail("Try unplugging and replugging this board, then run the program again.", indent=3)
+                graceful_exit()
             # Copy files to the board
             board.write_update_to_board(update_files)
+            ui.success(f"{board.port}: software flashed.", indent=2)
 
         # restart the boards
         for board in boards:
@@ -353,10 +367,11 @@ def flash_software(software):
         # wait for the boards to reboot
         def wait_for_reboot():
             restarted_boards = Ray.find_board_ports()
-            print(f" ({len(restarted_boards)} of {len(ports)}) restarted", end="")
+            print(ui.status(f"waiting for ({len(restarted_boards)} of {len(ports)}) board(s) to restart"), end="")
             return len(ports) <= len(restarted_boards)
 
         wait_for(wait_for_reboot, timeout=60)
+        ui.success("Software flashing complete.")
 
     finally:
         # Clean up the temporary directory

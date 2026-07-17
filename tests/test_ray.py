@@ -130,6 +130,166 @@ class TestSendCommandWaitForCompletion:
         assert ser.written.endswith(b"\x04")
 
 
+class ResponderSerial(FakeSerial):
+    """A FakeSerial that loads its scripted response only once the command's
+    Ctrl-D (0x04) has been written -- like a real board, which replies *after*
+    receiving the command. This survives the flushInput() send_command does
+    before writing (that flush would wipe a pre-queued response).
+
+    ``chunks`` is the list of byte groups the board "sends"; each is delivered
+    on a separate read so the tests can model both coalesced and split packets.
+    """
+
+    def __init__(self, chunks):
+        super().__init__(b"")
+        self._chunks = list(chunks)
+        self._armed = False
+
+    def write(self, data):
+        super().write(data)
+        if b"\x04" in data:
+            self._armed = True
+
+    @property
+    def in_waiting(self):
+        if not self._pending and self._armed and self._chunks:
+            self._pending = self._chunks.pop(0)
+        return len(self._pending)
+
+
+class TestSendCommandResponse:
+    def _board_with_serial(self, ser):
+        board = Ray.__new__(Ray)
+        board.port = "FAKE"
+        board.ser = ser
+        return board
+
+    def test_response_coalesced_with_ok_in_one_read(self):
+        # Regression: a short response can arrive in the same USB packet as the
+        # "OK" acknowledgement (seen on the Pico W). The reader must not block
+        # waiting for more data after consuming everything while finding "OK".
+        board = self._board_with_serial(ResponderSerial([b"OK[]\x04\x04>"]))
+        result = board.send_command("print([])", read_timeout=1)
+        assert "[]" in result
+
+    def test_response_arriving_after_ok(self):
+        # The other ordering: "OK" first, output in a later read.
+        board = self._board_with_serial(ResponderSerial([b"OK", b"hello\x04\x04>"]))
+        result = board.send_command("print('hello')", read_timeout=1)
+        assert "hello" in result
+
+    def test_includes_stderr_for_diagnostics(self):
+        # A board-side traceback (stderr) must survive so callers can surface it.
+        board = self._board_with_serial(ResponderSerial([b"OK\x04Traceback: boom\x04>"]))
+        result = board.send_command("raise Exception('boom')", read_timeout=1)
+        assert "Traceback: boom" in result
+
+    def test_times_out_when_no_output(self):
+        # "OK" but the EOT markers never arrive -> bounded by read_timeout.
+        board = self._board_with_serial(ResponderSerial([b"OK"]))
+        with pytest.raises(TimeoutError):
+            board.send_command("print('x')", read_timeout=0.2)
+
+    def test_partition_never_raises_on_odd_framing(self):
+        # Even with an unexpected single trailing marker the reader must return
+        # a string rather than raise (partition, not split-and-index).
+        board = self._board_with_serial(ResponderSerial([b"OKweird\x04\x04"]))
+        assert board.send_command("print('weird')", read_timeout=1) == "weird"
+
+
+class TestReadWithRetry:
+    def _bare_board(self):
+        board = Ray.__new__(Ray)
+        board.port = "FAKE"
+        return board
+
+    def test_retries_after_transient_timeout(self, monkeypatch):
+        board = self._bare_board()
+        calls = {"n": 0}
+
+        def flaky(script, ignore_response=False, read_timeout=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise TimeoutError("transient no-response")
+            return "[]"
+
+        drops = []
+        monkeypatch.setattr(board, "send_command", flaky, raising=False)
+        monkeypatch.setattr(board, "_drop_serial", lambda: drops.append(1), raising=False)
+        monkeypatch.setattr("src.ray.time.sleep", lambda s: None)
+
+        assert board._read_with_retry("print([])", read_timeout=30) == "[]"
+        assert calls["n"] == 2  # first failed, second succeeded
+        assert len(drops) == 1  # dropped the connection before the retry
+
+    def test_raises_after_exhausting_attempts(self, monkeypatch):
+        board = self._bare_board()
+
+        def always_timeout(script, ignore_response=False, read_timeout=None):
+            raise TimeoutError("no-response")
+
+        monkeypatch.setattr(board, "send_command", always_timeout, raising=False)
+        monkeypatch.setattr(board, "_drop_serial", lambda: None, raising=False)
+        monkeypatch.setattr("src.ray.time.sleep", lambda s: None)
+
+        with pytest.raises(TimeoutError):
+            board._read_with_retry("print([])", read_timeout=1, attempts=3)
+
+
+class TestReplReadiness:
+    def _bare_board(self):
+        board = Ray.__new__(Ray)
+        board.port = "FAKE"
+        return board
+
+    def test_is_repl_responsive_true(self, monkeypatch):
+        board = self._bare_board()
+        monkeypatch.setattr(board, "_exec_value", lambda script, timeout: "rdy", raising=False)
+        assert board.is_repl_responsive() is True
+
+    def test_is_repl_responsive_false_on_wrong_output(self, monkeypatch):
+        board = self._bare_board()
+        monkeypatch.setattr(board, "_exec_value", lambda script, timeout: "", raising=False)
+        assert board.is_repl_responsive() is False
+
+    def test_is_repl_responsive_false_on_exception(self, monkeypatch):
+        board = self._bare_board()
+
+        def boom(script, timeout):
+            raise TimeoutError("no OK")
+
+        monkeypatch.setattr(board, "_exec_value", boom, raising=False)
+        assert board.is_repl_responsive() is False
+
+    def test_wait_until_ready_returns_true_immediately(self, monkeypatch):
+        board = self._bare_board()
+        monkeypatch.setattr(board, "is_repl_responsive", lambda: True, raising=False)
+        called = []
+        assert board.wait_until_ready(on_wait=lambda: called.append(1)) is True
+        assert called == []  # never had to tell the user we were waiting
+
+    def test_wait_until_ready_retries_then_succeeds(self, monkeypatch):
+        board = self._bare_board()
+        responses = iter([False, False, True])
+        monkeypatch.setattr(board, "is_repl_responsive", lambda: next(responses), raising=False)
+        drops = []
+        monkeypatch.setattr(board, "_drop_serial", lambda: drops.append(1), raising=False)
+        monkeypatch.setattr("src.ray.time.sleep", lambda s: None)
+        waited = []
+        assert board.wait_until_ready(on_wait=lambda: waited.append(1)) is True
+        assert waited == [1]  # on_wait fires exactly once
+        assert len(drops) == 2  # connection dropped before each retry
+
+    def test_wait_until_ready_times_out(self, monkeypatch):
+        board = self._bare_board()
+        monkeypatch.setattr(board, "is_repl_responsive", lambda: False, raising=False)
+        monkeypatch.setattr(board, "_drop_serial", lambda: None, raising=False)
+        monkeypatch.setattr("src.ray.time.sleep", lambda s: None)
+        clock = {"t": 0.0}
+        monkeypatch.setattr("src.ray.time.monotonic", lambda: clock.__setitem__("t", clock["t"] + 0.5) or clock["t"])
+        assert board.wait_until_ready(timeout=1.0) is False
+
+
 class FakePortInfo:
     def __init__(self, vid=None, hwid=""):
         self.vid = vid
