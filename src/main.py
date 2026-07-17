@@ -5,7 +5,7 @@ import sys
 import time
 import traceback
 
-from src import __version__
+from src import __version__, ui
 from src.core import (
     firmware_system,
     flash_firmware,
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(f"\nError: {e}")
+        ui.error(f"{e}", indent=0)
         traceback.print_exc()
-        print("Program did not exit gracefully, do not install boards in pinball machine without sucsessfully flashing.")
+        ui.warning("Program did not exit gracefully. Do not install boards in a pinball machine without successfully flashing.", indent=0)
         graceful_exit()

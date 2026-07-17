@@ -11,6 +11,7 @@ import requests
 import rsa
 from InquirerPy import inquirer
 
+from src import ui
 from src.core import (
     DEFAULT_SYSTEM,
     DEFAULT_UPDATE_ASSET,
@@ -30,11 +31,11 @@ _RELEASE_VERSION_RE = re.compile(r"\*\*([^*]+)\*\*:\s*`([^`]+)`")
 
 
 def display_welcome():
-    print("Trenchcoat by Warped Pinball")
+    ui.title("Trenchcoat by Warped Pinball")
     print("Use this tool to flash firmware and software to your Warped Pinball devices.")
-    print("If you have any trouble, open an issue on GitHub:")
-    print("https://github.com/warped-pinball/trench-coat/issues")
-    print("Press Ctrl+C to exit at any time.")
+    ui.detail("If you have any trouble, open an issue on GitHub:", indent=0)
+    ui.detail("https://github.com/warped-pinball/trench-coat/issues", indent=0)
+    ui.detail("Press Ctrl+C to exit at any time.", indent=0)
     print()
 
 
@@ -140,36 +141,36 @@ def report_and_guard_boards(firmware):
         # Nothing running to identify (e.g. all boards already in bootloader).
         return True, []
 
-    print("Detected boards:")
+    ui.heading("Detecting boards")
     mismatch = False
     infos = []
     for port in ports:
-        info = _identify_with_retry(port, on_wait=lambda port=port: print(f"  {port}: waiting for the board to finish booting (this can take up to a minute)..."))
+        info = _identify_with_retry(port, on_wait=lambda port=port: ui.detail(f"{port}: waiting for the board to finish booting (this can take up to a minute)..."))
         if info is None:
             # Couldn't talk to the board even after waiting out a full boot.
             # Tell the user to replug (which reliably clears a wedged USB/REPL
             # state) rather than silently hanging or skipping.
-            print(f"  {port}: no response from board.")
-            print("     Try unplugging and replugging this board, then press ENTER to retry detection")
-            print("     (or just press ENTER to skip detection and continue).")
+            ui.error(f"{port}: no response from board.")
+            ui.detail("Try unplugging and replugging this board, then press ENTER to retry detection")
+            ui.detail("(or just press ENTER to skip detection and continue).")
             input()
             info = _identify_with_retry(port)
             if info is None:
-                print(f"  {port}: still no response - skipping detection for this board.")
+                ui.warning(f"{port}: still no response - skipping detection for this board.")
                 continue
 
         infos.append(info)
         board_name = info["board"] or "Unknown board"
         if info["processor"] == "rp2350":
             system = info["system"] or "unknown system"
-            print(f"  {port}: {board_name} (system: {system})")
+            ui.step(f"{port}: {board_name} (system: {system})")
         elif info["processor"] == "rp2040":
-            print(f"  {port}: {board_name} (legacy System 9 / 11)")
+            ui.step(f"{port}: {board_name} (legacy System 9 / 11)")
         else:
-            print(f"  {port}: {board_name}")
+            ui.step(f"{port}: {board_name}")
 
         if firmware_processor in ("rp2040", "rp2350") and info["processor"] and firmware_processor != info["processor"]:
-            print(f"     WARNING: selected firmware targets {firmware_processor.upper()} but this board is {info['processor'].upper()}.")
+            ui.warning(f"selected firmware targets {firmware_processor.upper()} but this board is {info['processor'].upper()}.", indent=2)
             mismatch = True
 
     if mismatch:

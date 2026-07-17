@@ -7,6 +7,8 @@ import time
 import serial
 import serial.tools.list_ports
 
+from src import ui
+
 PICO_VID = 0x2E8A
 PICO_PID = 0x0005  # MicroPython CDC (typical, but we match on VID alone)
 COMMAND_CHUNK_SIZE = 5000
@@ -158,40 +160,49 @@ class Ray:
                     raise TimeoutError(f"Board on {self.port} did not finish command within {read_timeout}s")
                 time.sleep(0.01)
 
-        # read in the initial "OK" response
+        # Read the raw-REPL response. After executing the command the board
+        # emits:  OK <stdout> \x04 <stderr> \x04 >
+        # We first wait for the "OK" acknowledgement, then keep reading until
+        # both EOT (0x04) markers have arrived.
+        #
+        # Reading to the EOT markers -- rather than the old "wait for data, then
+        # read until the stream goes idle for a second" heuristic -- is what
+        # makes this reliable when the board coalesces "OK" and the whole
+        # response into a single USB packet. That happens for short responses
+        # (e.g. the final hash-check line, which is usually just "[]") and is
+        # timing dependent, so it surfaced on the slower Pico W (rp2040) while
+        # the Pico 2 W (rp2350) happened to split them across reads. In the
+        # coalesced case the old code consumed everything while looking for
+        # "OK", then blocked forever in "wait until we have data" because the
+        # buffer was already drained -- the 30s timeout the user hit.
         buf = b""
-        while True:
+        while b"OK" not in buf:
             if self.ser.in_waiting > 0:
-                chunk = self.ser.read(self.ser.in_waiting)
-                if b"OK" in chunk:
-                    # add anything after the OK to the buffer
-                    buf += chunk[chunk.index(b"OK") + 2 :]
-                    break
-            if deadline is not None and time.time() > deadline:
+                buf += self.ser.read(self.ser.in_waiting)
+            elif deadline is not None and time.time() > deadline:
                 raise TimeoutError(f"No 'OK' response from board on {self.port} within {read_timeout}s")
-            time.sleep(0.01)
-
-        # wait until we have data in the input buffer
-        while self.ser.in_waiting == 0:
-            if deadline is not None and time.time() > deadline:
-                raise TimeoutError(f"No output from board on {self.port} within {read_timeout}s")
-            time.sleep(0.01)
-
-        # read all until it's been idle for 1 second
-        start_time = time.time()
-        while True:
-            if self.ser.in_waiting > 0:
-                chunk = self.ser.read(self.ser.in_waiting)
-                buf += chunk
-                start_time = time.time()
             else:
-                if time.time() - start_time > 1.0:
-                    break
-            time.sleep(0.01)
+                time.sleep(0.01)
 
-        # encode and return the output
-        buf = buf.decode("utf-8", errors="replace")
-        return buf
+        # Drop everything up to and including the "OK" acknowledgement.
+        buf = buf[buf.index(b"OK") + 2 :]
+
+        # Read until both the stdout and stderr EOT markers have arrived.
+        while buf.count(b"\x04") < 2:
+            if self.ser.in_waiting > 0:
+                buf += self.ser.read(self.ser.in_waiting)
+            elif deadline is not None and time.time() > deadline:
+                raise TimeoutError(f"No output from board on {self.port} within {read_timeout}s")
+            else:
+                time.sleep(0.01)
+
+        # Split out stdout and stderr (each terminated by an EOT marker) and
+        # return them joined. Callers extract their payload with find()/rfind(),
+        # and keeping stderr means a board-side traceback still shows up in the
+        # error messages they raise.
+        parts = buf.split(b"\x04")
+        stdout, stderr = parts[0], parts[1]
+        return (stdout + stderr).decode("utf-8", errors="replace")
 
     @staticmethod
     def generate_transfer_script(files: list[dict[str, str]], progress: bool = True):
@@ -254,7 +265,7 @@ class Ray:
         for i, file_info in enumerate(files):
             # Print progress
             if progress:
-                print(f"Uploading file {i + 1} of {len(files)}: {file_info['filename']}" + " " * 20, end="\r")
+                print(ui.status(f"uploading file {i + 1} of {len(files)}: {file_info['filename']}", indent=2) + " " * 20, end="\r")
 
             filename = file_info["filename"]
             file_metadata = file_info["metadata"]
@@ -333,7 +344,7 @@ class Ray:
         # remove anything before first [ or after last ]
         output = output[start : end + 1].strip()
         if output == "[]":
-            print("All files uploaded successfully.")
+            ui.detail("all files verified on board", indent=2)
             return
 
         raise ValueError(f"Board failed to upload files: {output}")

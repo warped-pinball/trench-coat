@@ -130,6 +130,67 @@ class TestSendCommandWaitForCompletion:
         assert ser.written.endswith(b"\x04")
 
 
+class ResponderSerial(FakeSerial):
+    """A FakeSerial that loads its scripted response only once the command's
+    Ctrl-D (0x04) has been written -- like a real board, which replies *after*
+    receiving the command. This survives the flushInput() send_command does
+    before writing (that flush would wipe a pre-queued response).
+
+    ``chunks`` is the list of byte groups the board "sends"; each is delivered
+    on a separate read so the tests can model both coalesced and split packets.
+    """
+
+    def __init__(self, chunks):
+        super().__init__(b"")
+        self._chunks = list(chunks)
+        self._armed = False
+
+    def write(self, data):
+        super().write(data)
+        if b"\x04" in data:
+            self._armed = True
+
+    @property
+    def in_waiting(self):
+        if not self._pending and self._armed and self._chunks:
+            self._pending = self._chunks.pop(0)
+        return len(self._pending)
+
+
+class TestSendCommandResponse:
+    def _board_with_serial(self, ser):
+        board = Ray.__new__(Ray)
+        board.port = "FAKE"
+        board.ser = ser
+        return board
+
+    def test_response_coalesced_with_ok_in_one_read(self):
+        # Regression: a short response can arrive in the same USB packet as the
+        # "OK" acknowledgement (seen on the Pico W). The reader must not block
+        # waiting for more data after consuming everything while finding "OK".
+        board = self._board_with_serial(ResponderSerial([b"OK[]\x04\x04>"]))
+        result = board.send_command("print([])", read_timeout=1)
+        assert "[]" in result
+
+    def test_response_arriving_after_ok(self):
+        # The other ordering: "OK" first, output in a later read.
+        board = self._board_with_serial(ResponderSerial([b"OK", b"hello\x04\x04>"]))
+        result = board.send_command("print('hello')", read_timeout=1)
+        assert "hello" in result
+
+    def test_includes_stderr_for_diagnostics(self):
+        # A board-side traceback (stderr) must survive so callers can surface it.
+        board = self._board_with_serial(ResponderSerial([b"OK\x04Traceback: boom\x04>"]))
+        result = board.send_command("raise Exception('boom')", read_timeout=1)
+        assert "Traceback: boom" in result
+
+    def test_times_out_when_no_output(self):
+        # "OK" but the EOT markers never arrive -> bounded by read_timeout.
+        board = self._board_with_serial(ResponderSerial([b"OK"]))
+        with pytest.raises(TimeoutError):
+            board.send_command("print('x')", read_timeout=0.2)
+
+
 class TestReplReadiness:
     def _bare_board(self):
         board = Ray.__new__(Ray)
