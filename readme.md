@@ -12,7 +12,7 @@ A simple tool by Warped Pinball for flashing MicroPython firmware and software t
 > [!IMPORTANT]
 > Turn off your pinball machine before flashing firmware. You do not need to uninstall your Vector board to flash firmware.
 
-See the **[Trench Coat Setup Guide](Trench-Coat-Install-Guide.md)** for step-by-step instructions on downloading, opening, and running TrenchCoat on Windows, macOS, and Linux.
+See the **[Trench Coat Setup Guide](Trench-Coat-Install-Guide.md)** ([PDF](Trench-Coat-Install-Guide.pdf)) for step-by-step instructions on downloading, opening, and running TrenchCoat on Windows, macOS, and Linux.
 
 In short: download the latest build for your operating system from the [releases page](https://github.com/warped-pinball/trench-coat/releases/latest), run it, and follow the on-screen prompts.
 

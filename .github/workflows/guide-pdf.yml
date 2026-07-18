@@ -1,8 +1,9 @@
 name: Build Install Guide PDF
 
 # Keeps a PDF of the setup guide in sync with the markdown source. The PDF is
-# generated from Trench-Coat-Install-Guide.md on every change (uploaded as a
-# build artifact) and attached to each GitHub release, so it never drifts.
+# generated from Trench-Coat-Install-Guide.md and committed back to the repo
+# when the guide changes on main, built for preview on pull requests, and
+# attached to GitHub releases, so it never drifts from the markdown.
 
 on:
   push:
@@ -72,6 +73,22 @@ jobs:
           name: Trench-Coat-Install-Guide
           path: Trench-Coat-Install-Guide.pdf
           if-no-files-found: error
+
+      # On a push to main, commit the freshly built PDF back to the repo so the
+      # committed copy always matches the markdown. Pushes made with
+      # GITHUB_TOKEN do not retrigger workflows, so this can't loop.
+      - name: Commit regenerated PDF
+        if: github.event_name == 'push'
+        run: |
+          if git diff --quiet -- Trench-Coat-Install-Guide.pdf; then
+            echo "PDF unchanged; nothing to commit."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add Trench-Coat-Install-Guide.pdf
+            git commit -m "Rebuild install guide PDF [skip ci]"
+            git push
+          fi
 
       - name: Attach PDF to release
         if: github.event_name == 'release'
