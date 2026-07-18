@@ -1,16 +1,11 @@
 name: Build Install Guide PDF
 
 # Keeps a PDF of the setup guide in sync with the markdown source. The PDF is
-# generated from Trench-Coat-Install-Guide.md and committed back to the repo
-# when the guide changes on main, built for preview on pull requests, and
-# attached to GitHub releases, so it never drifts from the markdown.
+# built for preview on pull requests, so contributors can regenerate and commit
+# Trench-Coat-Install-Guide.pdf alongside their changes to the markdown, and the
+# committed copy is attached to GitHub releases.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - Trench-Coat-Install-Guide.md
-      - .github/workflows/guide-pdf.yml
   pull_request:
     types: [opened, synchronize, reopened]
   release:
@@ -32,6 +27,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Install pandoc and LaTeX
+        if: github.event_name != 'release'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -42,6 +38,7 @@ jobs:
             lmodern
 
       - name: Build PDF from the markdown guide
+        if: github.event_name != 'release'
         run: |
           # GitHub-style alert markers (> [!IMPORTANT]) render as literal text
           # in the PDF, so turn them into bold labels first.
@@ -67,29 +64,28 @@ jobs:
             -V colorlinks=true \
             -V linkcolor=blue
 
+      # On pull requests the freshly built PDF is uploaded as an artifact so it
+      # can be previewed. Contributors are expected to commit the regenerated
+      # Trench-Coat-Install-Guide.pdf as part of their PR, and a diff against the
+      # committed copy flags when they forgot to.
+      - name: Warn if committed PDF is out of date
+        if: github.event_name == 'pull_request'
+        run: |
+          if ! git diff --quiet -- Trench-Coat-Install-Guide.pdf; then
+            echo "::warning::Trench-Coat-Install-Guide.pdf differs from the markdown source. Rebuild and commit it as part of this PR."
+          fi
+
       - name: Upload PDF artifact
+        if: github.event_name != 'release'
         uses: actions/upload-artifact@v6
         with:
           name: Trench-Coat-Install-Guide
           path: Trench-Coat-Install-Guide.pdf
           if-no-files-found: error
 
-      # On a push to main, commit the freshly built PDF back to the repo so the
-      # committed copy always matches the markdown. Pushes made with
-      # GITHUB_TOKEN do not retrigger workflows, so this can't loop.
-      - name: Commit regenerated PDF
-        if: github.event_name == 'push'
-        run: |
-          if git diff --quiet -- Trench-Coat-Install-Guide.pdf; then
-            echo "PDF unchanged; nothing to commit."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add Trench-Coat-Install-Guide.pdf
-            git commit -m "Rebuild install guide PDF [skip ci]"
-            git push
-          fi
-
+      # On a release, attach the PDF that is already committed to the repo. It is
+      # kept up to date through pull requests, so there is no need to rebuild it
+      # here.
       - name: Attach PDF to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
