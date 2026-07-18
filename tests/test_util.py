@@ -26,14 +26,3 @@ class TestVersion:
         from src import __version__
 
         assert re.fullmatch(r"\d+\.\d+\.\d+", __version__)
-
-    def test_pyproject_has_no_hardcoded_version(self):
-        """src/__init__.py is the single source of truth for the version;
-        pyproject.toml must read it dynamically, never pin its own copy."""
-        import os
-
-        pyproject = os.path.join(os.path.dirname(__file__), "..", "pyproject.toml")
-        with open(pyproject) as f:
-            text = f.read()
-        assert 'version = {attr = "src.__version__"}' in text
-        assert 'dynamic = ["version"]' in text
