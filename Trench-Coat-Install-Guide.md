@@ -99,6 +99,6 @@ Only now, after your selections are made, connect the board.
 
 ---
 
-**Trouble downloading?** All files also live on the [releases page](https://github.com/warped-pinball/trench-coat/releases/latest).
+**Trouble downloading?** All files also live on the [releases page](https://github.com/warped-pinball/trench-coat/releases/latest). A printable PDF of this guide (`Trench-Coat-Install-Guide.pdf`) is attached to each release there.
 
 Trench Coat is open-source and not code-signed, which is why your computer shows a first-run warning. The download links above always give you the latest version.
