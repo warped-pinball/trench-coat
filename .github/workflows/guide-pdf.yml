@@ -1,0 +1,82 @@
+name: Build Install Guide PDF
+
+# Keeps a PDF of the setup guide in sync with the markdown source. The PDF is
+# generated from Trench-Coat-Install-Guide.md on every change (uploaded as a
+# build artifact) and attached to each GitHub release, so it never drifts.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Trench-Coat-Install-Guide.md
+      - .github/workflows/guide-pdf.yml
+  pull_request:
+    paths:
+      - Trench-Coat-Install-Guide.md
+      - .github/workflows/guide-pdf.yml
+  release:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-pdf:
+    name: Build install guide PDF
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # needed to attach the PDF to a release
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install pandoc and LaTeX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pandoc \
+            texlive-latex-recommended \
+            texlive-latex-extra \
+            texlive-fonts-recommended \
+            lmodern
+
+      - name: Build PDF from the markdown guide
+        run: |
+          # GitHub-style alert markers (> [!IMPORTANT]) render as literal text
+          # in the PDF, so turn them into bold labels first.
+          sed -E \
+            -e 's/> \[!IMPORTANT\]/> **Important**/' \
+            -e 's/> \[!NOTE\]/> **Note**/' \
+            -e 's/> \[!WARNING\]/> **Warning**/' \
+            Trench-Coat-Install-Guide.md > guide.md
+
+          # Map the few non-ASCII glyphs the guide uses to LaTeX equivalents so
+          # the default (pdflatex) engine can typeset them.
+          {
+            echo '\usepackage{newunicodechar}'
+            echo '\newunicodechar{→}{$\rightarrow$}'
+            echo '\newunicodechar{❯}{\guilsinglright}'
+          } > header.tex
+
+          pandoc guide.md \
+            --output Trench-Coat-Install-Guide.pdf \
+            --pdf-engine=pdflatex \
+            --include-in-header=header.tex \
+            -V geometry:margin=1in \
+            -V colorlinks=true \
+            -V linkcolor=blue
+
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: Trench-Coat-Install-Guide
+          path: Trench-Coat-Install-Guide.pdf
+          if-no-files-found: error
+
+      - name: Attach PDF to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Trench-Coat-Install-Guide.pdf
