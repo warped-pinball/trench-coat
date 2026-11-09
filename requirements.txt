@@ -2,6 +2,11 @@ pyserial==3.5
 pyinstaller==6.12
 simple-term-menu==1.6.6
 InquirerPy==0.3.3
+# wcwidth comes in through InquirerPy/prompt_toolkit. 0.9.0 and later ship a
+# compiled extension with no universal2 wheel, so the arm64 runner gets an
+# arm64 only build and the macos-x86_64 PyInstaller cross build fails.
+# 0.8.5 is the last pure Python release.
+wcwidth==0.8.5
 requests==2.32.3
 pre-commit
 pytest
