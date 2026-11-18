@@ -8,10 +8,14 @@ from src.core import (
     DEFAULT_SYSTEM,
     SYSTEM_LABEL,
     SYSTEM_UPDATE_ASSET,
-    find_system_firmware,
+    FirmwarePlanError,
+    FirmwareSelection,
+    choose_batch_firmware,
+    find_system_images,
     firmware_system,
     get_files_from_update_file,
     list_bundled_uf2,
+    read_drive_info,
     system_for_boards,
     uf2_target_processor,
 )
@@ -118,7 +122,7 @@ class TestFirmwareSystem:
         assert firmware_system("vector_system_11_and_9_v4.uf2") != "em"
 
 
-class TestFindSystemFirmware:
+class TestFindSystemImages:
     BUNDLED = [
         "/app/uf2/Vector_WPC_v5.uf2",
         "/app/uf2/Vector_DataEast_v1.uf2",
@@ -126,20 +130,109 @@ class TestFindSystemFirmware:
         "/app/uf2/Vector_Classics_V1.uf2",
     ]
 
+    def test_sys11_has_an_image_per_board(self):
+        images = find_system_images("sys11", self.BUNDLED)
+        assert images["rp2040"].endswith("vector_system_11_and_9_v4.uf2")
+        assert images["rp2350"].endswith("Vector_DataEast_v1.uf2")
+
     def test_each_bundled_system(self):
-        assert find_system_firmware("sys11", self.BUNDLED).endswith("vector_system_11_and_9_v4.uf2")
-        assert find_system_firmware("wpc", self.BUNDLED).endswith("Vector_WPC_v5.uf2")
-        assert find_system_firmware("data_east", self.BUNDLED).endswith("Vector_DataEast_v1.uf2")
-        assert find_system_firmware("classic", self.BUNDLED).endswith("Vector_Classics_V1.uf2")
+        assert find_system_images("wpc", self.BUNDLED) == {"rp2350": "/app/uf2/Vector_WPC_v5.uf2"}
+        assert find_system_images("data_east", self.BUNDLED) == {"rp2350": "/app/uf2/Vector_DataEast_v1.uf2"}
+        assert find_system_images("classic", self.BUNDLED) == {"rp2350": "/app/uf2/Vector_Classics_V1.uf2"}
 
     def test_em_shares_wpc_os(self):
-        assert find_system_firmware("em", self.BUNDLED).endswith("Vector_WPC_v5.uf2")
+        assert find_system_images("em", self.BUNDLED) == {"rp2350": "/app/uf2/Vector_WPC_v5.uf2"}
 
     def test_unreleased_system(self):
-        assert find_system_firmware("whitestar", self.BUNDLED) is None
+        assert find_system_images("whitestar", self.BUNDLED) == {}
 
     def test_unknown_system(self):
-        assert find_system_firmware("not_a_system", self.BUNDLED) is None
+        assert find_system_images("not_a_system", self.BUNDLED) == {}
+
+    def test_sys11_with_only_pico_w_image(self):
+        assert find_system_images("sys11", ["/app/uf2/vector_system_11_and_9_v4.uf2"]) == {"rp2040": "/app/uf2/vector_system_11_and_9_v4.uf2"}
+
+    def test_skips_image_built_for_the_other_chip(self, tmp_path):
+        # A filename collision must never put an RP2350 image on a Pico W.
+        wrong = write_uf2(tmp_path, "a_system_rp2350.uf2", [RP2350_ARM_S_FAMILY])
+        right = write_uf2(tmp_path, "b_system_rp2040.uf2", [RP2040_FAMILY])
+        assert find_system_images("sys11", [wrong, right])["rp2040"] == right
+
+    def test_real_bundled_sys11_images_target_the_right_chip(self):
+        images = find_system_images("sys11", list_bundled_uf2())
+        assert uf2_target_processor(images["rp2040"]) == "rp2040"
+        assert uf2_target_processor(images["rp2350"]) == "rp2350"
+
+
+def write_info(tmp_path, name, text):
+    drive = tmp_path / name
+    drive.mkdir()
+    (drive / "INFO_UF2.TXT").write_text(text)
+    return str(drive)
+
+
+PICO_W_INFO = "UF2 Bootloader v3.0\nModel: Raspberry Pi RP2\nBoard-ID: RPI-RP2\n"
+PICO_2W_INFO = "UF2 Bootloader v1.0\nModel: Raspberry Pi RP2350\nBoard-ID: RP2350\n"
+
+
+class TestReadDriveInfo:
+    def test_pico_w(self, tmp_path):
+        info = read_drive_info(write_info(tmp_path, "d", PICO_W_INFO))
+        assert info == {"processor": "rp2040", "board_id": "RPI-RP2", "model": "Raspberry Pi RP2", "bootloader": "UF2 Bootloader v3.0"}
+
+    def test_pico_2w(self, tmp_path):
+        info = read_drive_info(write_info(tmp_path, "d", PICO_2W_INFO))
+        assert info["processor"] == "rp2350"
+        assert info["board_id"] == "RP2350"
+
+    def test_unknown_board(self, tmp_path):
+        assert read_drive_info(write_info(tmp_path, "d", "Board-ID: SOMETHING\n"))["processor"] is None
+
+    def test_missing_file(self, tmp_path):
+        assert read_drive_info(str(tmp_path))["processor"] is None
+
+
+def drives(*processors):
+    return {f"{chr(69 + i)}:\\": {"processor": p, "board_id": None, "model": None, "bootloader": None} for i, p in enumerate(processors)}
+
+
+class TestChooseBatchFirmware:
+    SYS11 = FirmwareSelection("sys11", {"rp2040": "sys11_v4.uf2", "rp2350": "dataeast.uf2"})
+    WPC = FirmwareSelection("wpc", {"rp2350": "wpc.uf2"})
+
+    def test_pico_w_batch_gets_legacy_image(self):
+        assert choose_batch_firmware(self.SYS11, drives("rp2040", "rp2040")) == ("sys11_v4.uf2", "rp2040")
+
+    def test_pico_2w_batch_gets_dataeast_image(self):
+        assert choose_batch_firmware(self.SYS11, drives("rp2350")) == ("dataeast.uf2", "rp2350")
+
+    def test_mixed_batch_rejected(self):
+        with pytest.raises(FirmwarePlanError, match="Mixed board types"):
+            choose_batch_firmware(self.SYS11, drives("rp2040", "rp2350"))
+
+    def test_series_without_image_for_chip_rejected(self):
+        with pytest.raises(FirmwarePlanError, match="No WPC OS"):
+            choose_batch_firmware(self.WPC, drives("rp2040"))
+
+    def test_unreadable_drive_rejected_for_bundled_series(self):
+        with pytest.raises(FirmwarePlanError, match="Could not tell"):
+            choose_batch_firmware(self.SYS11, drives(None))
+
+    def test_custom_image_flashes_as_requested(self):
+        custom = FirmwareSelection("sys11", {"rp2350": "mine.uf2"}, custom=True)
+        assert choose_batch_firmware(custom, drives("rp2040"))[0] == "mine.uf2"
+        assert choose_batch_firmware(custom, drives(None))[0] == "mine.uf2"
+
+
+class TestFirmwareSelectionFromCustom:
+    def test_targets_its_own_chip(self, tmp_path):
+        path = write_uf2(tmp_path, "mine.uf2", [RP2040_FAMILY])
+        sel = FirmwareSelection.from_custom(path)
+        assert sel.custom and sel.images == {"rp2040": path}
+
+    def test_universal_image_targets_both(self, tmp_path):
+        path = write_uf2(tmp_path, "mine.uf2", [RP2040_FAMILY, ABSOLUTE_FAMILY])
+        assert set(FirmwareSelection.from_custom(path).images) == {"rp2040", "rp2350"}
 
 
 class TestSystemForBoards:

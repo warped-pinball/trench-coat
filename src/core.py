@@ -41,13 +41,91 @@ def get_all_boards_into_bootloader():
     wait_for(wait_for_bootloader, timeout=60)
 
 
-def flash_firmware(firmware_path):
-    """Core function to flash firmware to devices"""
+def _abort_before_wipe(message, hints=()):
+    """Stop flashing before anything has been erased."""
+    ui.error(message)
+    for hint in hints:
+        ui.detail(hint, indent=2)
+    ui.detail("Nothing was erased. The board(s) are sitting in bootloader mode; unplug them before continuing.", indent=2)
+    graceful_exit()
+
+
+def choose_batch_firmware(selection, drive_infos):
+    """Validate a batch of bootloader drives and pick the one image to flash.
+
+    ``drive_infos`` maps drive path -> ``read_drive_info()`` result. A batch
+    must be a single board type (mixed Pico W + Pico 2 W batches are
+    rejected). Returns ``(firmware_path, processor)``; raises
+    ``FirmwarePlanError`` with a user-facing message if the batch can't be
+    flashed with ``selection``.
+    """
+    if not drive_infos:
+        raise FirmwarePlanError("No boards found in bootloader mode.", ["Unplug and replug the board(s), then run the program again."])
+    processors = {info["processor"] for info in drive_infos.values()}
+    unknown = [drive for drive, info in drive_infos.items() if info["processor"] is None]
+    known = processors - {None}
+
+    if len(known) > 1:
+        counts = ", ".join(f"{sum(1 for i in drive_infos.values() if i['processor'] == p)} x {processor_label(p)}" for p in sorted(known))
+        raise FirmwarePlanError(
+            f"Mixed board types connected ({counts}).",
+            ["Flash one board type at a time: unplug the other type and run again."],
+        )
+
+    if unknown and not selection.custom:
+        raise FirmwarePlanError(
+            f"Could not tell which Pico is in bootloader drive(s) {', '.join(unknown)}.",
+            ["The drive's INFO_UF2.TXT did not report a known Board-ID (expected RPI-RP2 or RP2350)."],
+        )
+
+    processor = next(iter(known), None)
+    firmware_path = selection.image_for(processor)
+    if firmware_path is None:
+        available = ", ".join(processor_label(p) for p in selection.images) or "no boards"
+        raise FirmwarePlanError(
+            f"No {SYSTEM_LABEL.get(selection.system, selection.system)} OS is bundled for {processor_label(processor)} boards.",
+            [f"This series currently supports: {available}."],
+        )
+    return firmware_path, processor
+
+
+def _report_drives(drives):
+    """Read and print the chip/bootloader diagnostics for each drive."""
+    infos = {}
+    for drive in drives:
+        info = read_drive_info(drive)
+        infos[drive] = info
+        ui.step(f"{drive} -> {processor_label(info['processor'])}")
+        ui.detail(f"Board-ID: {info['board_id'] or '(not found)'} | Model: {info['model'] or '(not found)'} | {info['bootloader'] or 'bootloader version unknown'}")
+    return infos
+
+
+def flash_firmware(selection):
+    """Core function to flash firmware to devices.
+
+    ``selection`` is a ``FirmwareSelection``; the actual UF2 image is chosen
+    per batch from the chip each bootloader drive reports, *before* any
+    board is wiped.
+    """
     ui.heading("Flashing firmware")
     get_all_boards_into_bootloader()
 
     # Get the updated list of bootloader drives
     bootloader_drives = list_rpi_rp2_drives()
+
+    # Work out which Pico(s) we're talking to and pick the matching OS image.
+    ui.step("Detecting board type from bootloader drive(s)")
+    drive_infos = _report_drives(bootloader_drives)
+    try:
+        firmware_path, batch_processor = choose_batch_firmware(selection, drive_infos)
+    except FirmwarePlanError as e:
+        _abort_before_wipe(e.message, e.hints)
+
+    target = uf2_target_processor(firmware_path)
+    ui.success(f"Selected OS image for {processor_label(batch_processor)}: {os.path.basename(firmware_path)}")
+    ui.detail(f"image targets: {processor_label(target) if target in PROCESSOR_LABEL else (target or 'unknown')}")
+    if batch_processor is None or (target in PROCESSOR_LABEL and target != batch_processor):
+        ui.warning("custom firmware may not match this board's chip - flashing anyway as requested.")
 
     # wipe the board with nuke.uf2
     nuke_path = [path for path in list_bundled_uf2() if "nuke.uf2" in path]
@@ -88,6 +166,15 @@ def flash_firmware(firmware_path):
     # (They could have changed paths)
     if len(bootloader_drives) == len(list_rpi_rp2_drives()):
         bootloader_drives = list_rpi_rp2_drives()
+
+    # Drive letters can change after a wipe, so re-check each drive's chip
+    # right before copying rather than trusting the earlier mapping.
+    for drive in bootloader_drives:
+        processor = read_drive_info(drive)["processor"]
+        if processor != batch_processor and batch_processor is not None:
+            ui.error(f"{drive} now reports {processor_label(processor)}, expected {processor_label(batch_processor)}.")
+            ui.detail("Unplug all boards and run the program again.", indent=2)
+            graceful_exit()
 
     # give the drives a moment to settle
     time.sleep(5)
@@ -251,36 +338,132 @@ def firmware_system(firmware_path):
     return DEFAULT_SYSTEM
 
 
-# Firmware (OS) keyword used to find the bundled UF2 image for each system.
-# Several systems can share one OS -- EM games run on the WPC OS -- so this maps
-# the system to the OS it boots, matched by keyword in the UF2 filename. A
-# system whose keyword matches no bundled UF2 is treated as "not available yet"
-# (e.g. WhiteStar has no keyword here until its OS is bundled).
-SYSTEM_FIRMWARE_KEYWORD = {
-    "sys11": "system",  # Vector_system_11_and_9_v4.uf2
-    "wpc": "wpc",  # Vector_WPC_v5.uf2
-    "em": "wpc",  # EM uses the WPC OS
-    "data_east": "dataeast",  # Vector_DataEast_v1.uf2
-    "classic": "classic",  # Vector_Classics_V1.uf2
+# Firmware (OS) keyword used to find the bundled UF2 image for each system, per
+# board processor. Several systems can share one OS -- EM games run on the WPC
+# OS, and the Pico 2 W System 9 / 11 board runs the Data East OS (with the
+# normal System 11 software) -- so this maps (system, processor) to the OS it
+# boots, matched by keyword in the UF2 filename. A system with no matching
+# bundled UF2 is treated as "not available yet" (e.g. WhiteStar).
+SYSTEM_FIRMWARE_KEYWORDS = {
+    "sys11": {
+        "rp2040": "system",  # vector_system_11_and_9_v4.uf2 (original Pico W board)
+        "rp2350": "dataeast",  # Vector_DataEast_v1.uf2 (Pico 2 W board: Sys9/11 + Data East)
+    },
+    "wpc": {"rp2350": "wpc"},  # Vector_WPC_v5.uf2
+    "em": {"rp2350": "wpc"},  # EM uses the WPC OS
+    "data_east": {"rp2350": "dataeast"},  # Vector_DataEast_v1.uf2
+    "classic": {"rp2350": "classic"},  # Vector_Classics_V1.uf2
 }
 
 # Order the game series are offered in the selection menu.
 SERIES_MENU_ORDER = ["sys11", "wpc", "em", "data_east", "classic"]
 
+# Human-friendly board names per processor.
+PROCESSOR_LABEL = {
+    "rp2040": "Pico W (RP2040)",
+    "rp2350": "Pico 2 W (RP2350)",
+}
 
-def find_system_firmware(system, bundled_paths):
-    """Return the bundled UF2 path that provides the OS for ``system``.
 
-    Matches ``SYSTEM_FIRMWARE_KEYWORD[system]`` against each UF2 filename.
-    Returns ``None`` if the system has no firmware keyword or no bundled image
-    matches (i.e. its OS is not available yet)."""
-    keyword = SYSTEM_FIRMWARE_KEYWORD.get(system)
-    if not keyword:
+def processor_label(processor):
+    return PROCESSOR_LABEL.get(processor, "unknown board")
+
+
+def find_system_images(system, bundled_paths):
+    """Return ``{processor: uf2_path}`` for the bundled OS images of ``system``.
+
+    For each processor the system supports, picks the first (sorted) bundled
+    UF2 whose filename contains that processor's keyword. A candidate whose
+    UF2 headers explicitly target the *other* processor is skipped, so a
+    filename collision can never put an RP2040 image on an RP2350 or vice
+    versa. Returns ``{}`` if nothing is bundled (OS not available yet)."""
+    images = {}
+    for processor, keyword in SYSTEM_FIRMWARE_KEYWORDS.get(system, {}).items():
+        for path in sorted(bundled_paths, key=lambda p: os.path.basename(p).lower()):
+            if keyword not in os.path.basename(path).lower():
+                continue
+            target = uf2_target_processor(path)
+            if target in PROCESSOR_LABEL and target != processor:
+                continue
+            images[processor] = path
+            break
+    return images
+
+
+class FirmwarePlanError(Exception):
+    def __init__(self, message, hints=()):
+        super().__init__(message)
+        self.message = message
+        self.hints = list(hints)
+
+
+class FirmwareSelection:
+    """The OS the user asked for, resolved to a UF2 per board processor.
+
+    ``images`` maps processor -> UF2 path. Bundled series pick the image that
+    matches the connected board's chip. A ``custom`` selection is a single
+    user-supplied file that is flashed as-is (the user is warned about a
+    processor mismatch, but may override it)."""
+
+    def __init__(self, system, images, custom=False):
+        self.system = system
+        self.images = dict(images)
+        self.custom = custom
+
+    @classmethod
+    def bundled(cls, system, bundled_paths):
+        return cls(system, find_system_images(system, bundled_paths))
+
+    @classmethod
+    def from_custom(cls, path):
+        target = uf2_target_processor(path)
+        if target in PROCESSOR_LABEL:
+            images = {target: path}
+        else:  # universal / unknown image: usable on either chip
+            images = {p: path for p in PROCESSOR_LABEL}
+        return cls(firmware_system(path), images, custom=True)
+
+    @property
+    def available(self):
+        return bool(self.images)
+
+    def image_for(self, processor):
+        if processor in self.images:
+            return self.images[processor]
+        if self.custom and self.images:
+            return next(iter(self.images.values()))
         return None
-    for path in bundled_paths:
-        if keyword in os.path.basename(path).lower():
-            return path
-    return None
+
+
+def read_drive_info(drive):
+    """Read a UF2 bootloader drive's INFO_UF2.TXT to identify the chip.
+
+    Works for any board in bootloader mode -- blank, wiped, or running
+    non-Vector firmware. Returns a dict with ``processor`` (``"rp2040"`` /
+    ``"rp2350"`` / ``None``) plus the raw ``board_id``, ``model`` and
+    ``bootloader`` lines for diagnostics."""
+    info = {"processor": None, "board_id": None, "model": None, "bootloader": None}
+    try:
+        with open(os.path.join(drive, "INFO_UF2.TXT"), "r", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return info
+
+    for line in text.splitlines():
+        line = line.strip()
+        if line.lower().startswith("board-id:"):
+            info["board_id"] = line.split(":", 1)[1].strip()
+        elif line.lower().startswith("model:"):
+            info["model"] = line.split(":", 1)[1].strip()
+        elif line.lower().startswith("uf2 bootloader"):
+            info["bootloader"] = line
+
+    ident = f"{info['board_id'] or ''} {info['model'] or ''}".upper()
+    if "RP2350" in ident:
+        info["processor"] = "rp2350"
+    elif "RPI-RP2" in ident or "RP2040" in ident or ident.strip().endswith("RP2"):
+        info["processor"] = "rp2040"
+    return info
 
 
 def system_for_boards(infos, default=DEFAULT_SYSTEM):
