@@ -483,6 +483,15 @@ class Ray:
             return ""
         return out[start + 3 : end].strip()
 
+    _MACHINE_SCRIPT = [
+        "import os",
+        "try:",
+        "    _m = os.uname().machine",
+        "except Exception:",
+        "    _m = ''",
+        "print('<<<' + _m + '>>>')",
+    ]
+
     def detect_processor(self, timeout: float | None = 3.0) -> str | None:
         """
         Detect the board's processor / silicon family.
@@ -492,15 +501,12 @@ class Ray:
         in silicon, so it works even on a freshly flashed or otherwise blank
         board.
         """
-        script = [
-            "import os",
-            "try:",
-            "    _m = os.uname().machine",
-            "except Exception:",
-            "    _m = ''",
-            "print('<<<' + _m + '>>>')",
-        ]
-        machine = self._exec_value(script, timeout).upper()
+        return self.processor_from_machine(self._exec_value(self._MACHINE_SCRIPT, timeout))
+
+    @staticmethod
+    def processor_from_machine(machine: str) -> str | None:
+        """Map an ``os.uname().machine`` string to ``"rp2040"`` / ``"rp2350"``."""
+        machine = (machine or "").upper()
         if "RP2350" in machine:
             return "rp2350"
         if "RP2040" in machine:
@@ -541,6 +547,7 @@ class Ray:
         Returns a dict with:
           - ``processor``: ``"rp2040"`` / ``"rp2350"`` / ``None``
           - ``board``: friendly name ("Pico W" / "Pico 2 W") or ``None``
+          - ``machine``: raw ``os.uname().machine`` string (diagnostics)
           - ``system``: Vector system variant of the installed firmware, or
             ``None`` (only meaningful for Pico 2 W; a Pico W is always the
             legacy System 9 / 11 board)
@@ -548,14 +555,15 @@ class Ray:
         The system probe is skipped for Pico W boards, which by definition run
         the legacy System 9 / 11 firmware.
         """
-        processor = self.detect_processor(timeout)
+        machine = self._exec_value(self._MACHINE_SCRIPT, timeout)
+        processor = self.processor_from_machine(machine)
         board = self.PROCESSOR_BOARD_NAMES.get(processor) if processor else None
 
         system = None
         if processor == "rp2350":
             system = self.detect_system(timeout)
 
-        return {"processor": processor, "board": board, "system": system}
+        return {"processor": processor, "board": board, "system": system, "machine": machine or None}
 
     def sha256_index(self) -> dict[str, str]:
         """

@@ -7,7 +7,7 @@ import traceback
 
 from src import __version__, ui
 from src.core import (
-    firmware_system,
+    FirmwareSelection,
     flash_firmware,
     flash_software,
     list_rpi_rp2_drives,
@@ -110,8 +110,10 @@ def wait_for_n_devices(n):
 def choose_firmware_and_software(args):
     """Resolve which firmware and software to flash, prompting as needed.
 
-    Returns ``(firmware, system, software)``. A series determines both the OS
-    firmware and the software; several series can share an OS (EM runs on the
+    Returns ``(firmware, system, software)`` where ``firmware`` is a
+    ``FirmwareSelection`` (the OS image is picked per batch from the
+    connected board's chip). A series determines both the OS firmware and the
+    software; several series can share an OS (EM runs on the
     WPC OS), so the system id is carried explicitly rather than re-inferred
     from the firmware filename. The software update file is system-specific
     (WPC, EM, Data East, Sys11, ...):
@@ -123,8 +125,8 @@ def choose_firmware_and_software(args):
     system = None
     if not args.skip_firmware:
         if args.firmware:
-            firmware = args.firmware
-            system = firmware_system(firmware)
+            firmware = FirmwareSelection.from_custom(args.firmware)
+            system = firmware.system
         else:
             firmware, system = select_firmware_and_system()
 

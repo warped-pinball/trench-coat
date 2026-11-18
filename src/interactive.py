@@ -18,10 +18,9 @@ from src.core import (
     SERIES_MENU_ORDER,
     SYSTEM_LABEL,
     SYSTEM_UPDATE_ASSET,
-    find_system_firmware,
-    firmware_system,
+    FirmwareSelection,
     list_bundled_uf2,
-    uf2_target_processor,
+    processor_label,
 )
 from src.ray import Ray
 from src.util import graceful_exit
@@ -48,17 +47,20 @@ def select_firmware_and_system():
     Series whose OS is not bundled yet are shown as "(coming soon)" and cannot
     be selected.
 
-    Returns ``(firmware_path, system_id)``.
+    Returns ``(FirmwareSelection, system_id)``. A series can provide a
+    different OS image per board type (System 9 / 11 runs one image on the
+    Pico W and another on the Pico 2 W); the image is picked per batch once
+    the connected board's chip is known.
     """
     bundled = [f for f in list_bundled_uf2() if "nuke.uf2" not in f]
 
     # Build a menu entry for each known series, resolving its OS firmware.
-    entries = []  # list of (display_text, system_id, firmware_path_or_None)
+    entries = []  # list of (display_text, system_id, FirmwareSelection)
     for system in SERIES_MENU_ORDER:
         label = SYSTEM_LABEL.get(system, system)
-        firmware = find_system_firmware(system, bundled)
-        display = label if firmware else f"{label} (coming soon)"
-        entries.append((display, system, firmware))
+        selection = FirmwareSelection.bundled(system, bundled)
+        display = label if selection.available else f"{label} (coming soon)"
+        entries.append((display, system, selection))
 
     choices = [e[0] for e in entries] + ["Custom firmware...", "Exit"]
     menu_entry = inquirer.select(message="Select the game series to flash:", choices=choices, default=0).execute()
@@ -71,16 +73,33 @@ def select_firmware_and_system():
         if not os.path.isfile(path):
             print("Invalid file path.")
             graceful_exit()
-        return path, firmware_system(path)
+        selection = FirmwareSelection.from_custom(path)
+        describe_selection(selection)
+        return selection, selection.system
 
-    display, system, firmware = next(e for e in entries if e[0] == menu_entry)
-    if firmware is None:
+    display, system, selection = next(e for e in entries if e[0] == menu_entry)
+    if not selection.available:
         # Series chosen whose OS is not released yet -- explain and re-prompt.
         label = SYSTEM_LABEL.get(system, system)
         print(f"{label} is not available yet - its OS is still in development. Please choose another series.")
         return select_firmware_and_system()
 
-    return firmware, system
+    describe_selection(selection)
+    return selection, system
+
+
+def describe_selection(selection):
+    """Print which OS image will be used for each board type."""
+    label = SYSTEM_LABEL.get(selection.system, selection.system)
+    if selection.custom:
+        path = next(iter(selection.images.values()))
+        targets = " / ".join(processor_label(p) for p in selection.images)
+        ui.step(f"custom firmware: {os.path.basename(path)} (targets {targets})")
+        ui.detail(f"software series inferred from filename: {label}")
+        return
+    ui.step(f"{label} OS - image used per board type:")
+    for processor, path in selection.images.items():
+        ui.detail(f"{processor_label(processor)}: {os.path.basename(path)}")
 
 
 def _identify_with_retry(port, timeout: float = 45.0, delay: float = 0.5, on_wait=None):
@@ -119,26 +138,29 @@ def _identify_with_retry(port, timeout: float = 45.0, delay: float = 0.5, on_wai
             board.close()
 
 
-def report_and_guard_boards(firmware):
+def report_and_guard_boards(selection):
     """Identify connected (running) boards, print what they are, and guard
-    against a processor mismatch with the selected firmware.
+    against flashing a batch the selected firmware can't handle.
 
-    For each running board this prints whether it is a Pico W (legacy
-    System 9 / 11) or a Pico 2 W (and, for the Pico 2 W, which Vector system
-    its current firmware reports). If a firmware image was selected and its
-    target processor does not match a detected board, the user is warned and
-    asked whether to continue.
+    For each running board this prints the chip (Pico W / Pico 2 W), the raw
+    ``os.uname().machine`` string, the Vector system its current firmware
+    reports, and which OS image it will receive. Then:
 
-    Returns ``(proceed, infos)`` where ``proceed`` is ``True`` to continue
-    flashing (``False`` to abort) and ``infos`` is the list of identity dicts
+      - a mixed batch (Pico W + Pico 2 W together) is rejected -- flash one
+        board type at a time;
+      - a bundled series with no OS image for a detected chip is rejected;
+      - a custom image whose target chip doesn't match warns and asks.
+
+    Returns ``(proceed, infos)`` where ``infos`` is the list of identity dicts
     for the boards that were successfully identified. Boards already in
-    bootloader mode cannot be queried over the REPL and are skipped.
+    bootloader mode cannot be queried over the REPL and are skipped here; they
+    are checked again from their bootloader drive before anything is wiped.
     """
-    firmware_processor = uf2_target_processor(firmware) if firmware else None
-
     ports = Ray.find_board_ports()
     if not ports:
         # Nothing running to identify (e.g. all boards already in bootloader).
+        if selection is not None:
+            ui.detail("No running boards to query - board type will be read from the bootloader drive before flashing.", indent=1)
         return True, []
 
     ui.heading("Detecting boards")
@@ -160,18 +182,34 @@ def report_and_guard_boards(firmware):
                 continue
 
         infos.append(info)
-        board_name = info["board"] or "Unknown board"
-        if info["processor"] == "rp2350":
-            system = info["system"] or "unknown system"
-            ui.step(f"{port}: {board_name} (system: {system})")
-        elif info["processor"] == "rp2040":
-            ui.step(f"{port}: {board_name} (legacy System 9 / 11)")
-        else:
-            ui.step(f"{port}: {board_name}")
+        processor = info.get("processor")
+        ui.step(f"{port}: {processor_label(processor)}")
+        ui.detail(f"chip reports: {info.get('machine') or '(no response)'}")
+        if processor == "rp2350":
+            ui.detail(f"current firmware system: {info.get('system') or 'unknown (blank or non-Vector firmware)'}")
+        elif processor == "rp2040":
+            ui.detail("current firmware system: legacy System 9 / 11 board")
 
-        if firmware_processor in ("rp2040", "rp2350") and info["processor"] and firmware_processor != info["processor"]:
-            ui.warning(f"selected firmware targets {firmware_processor.upper()} but this board is {info['processor'].upper()}.", indent=2)
-            mismatch = True
+        if selection is None:
+            continue
+        image = selection.image_for(processor) if processor else None
+        if image:
+            ui.detail(f"will flash: {os.path.basename(image)}")
+        if processor and processor not in selection.images:
+            if selection.custom:
+                ui.warning(f"selected firmware does not target {processor_label(processor)}.", indent=2)
+                mismatch = True
+            else:
+                label = SYSTEM_LABEL.get(selection.system, selection.system)
+                ui.error(f"No {label} OS is bundled for {processor_label(processor)} boards.", indent=2)
+                ui.detail(f"{label} supports: {', '.join(processor_label(p) for p in selection.images)}.", indent=3)
+                return False, infos
+
+    detected = {i.get("processor") for i in infos} - {None}
+    if len(detected) > 1:
+        ui.error("Mixed board types connected (" + " + ".join(processor_label(p) for p in sorted(detected)) + ").")
+        ui.detail("Flash one board type at a time: unplug the other type and run again.", indent=2)
+        return False, infos
 
     if mismatch:
         proceed = bool(inquirer.confirm(message="One or more boards do not match the selected firmware. Flash anyway?", default=False).execute())
