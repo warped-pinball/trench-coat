@@ -10,6 +10,7 @@ from datetime import datetime
 import requests
 import rsa
 from InquirerPy import inquirer
+from InquirerPy.base.control import Choice
 
 from src import ui
 from src.core import (
@@ -19,6 +20,8 @@ from src.core import (
     SYSTEM_LABEL,
     SYSTEM_UPDATE_ASSET,
     FirmwareSelection,
+    custom_image_systems,
+    firmware_system,
     list_bundled_uf2,
     processor_label,
 )
@@ -73,8 +76,7 @@ def select_firmware_and_system():
         if not os.path.isfile(path):
             print("Invalid file path.")
             graceful_exit()
-        selection = FirmwareSelection.from_custom(path)
-        describe_selection(selection)
+        selection = select_custom_firmware(path)
         return selection, selection.system
 
     display, system, selection = next(e for e in entries if e[0] == menu_entry)
@@ -88,6 +90,32 @@ def select_firmware_and_system():
     return selection, system
 
 
+def select_custom_firmware(path, system=None):
+    """Build the ``FirmwareSelection`` for a user-supplied UF2.
+
+    The software series comes from ``system`` when the caller already knows
+    it. Otherwise it is inferred from the filename, and when that filename
+    names an OS shared by several series (the Data East image also runs
+    System 9 / 11 on the Pico 2 W) the user is asked which one they mean.
+    """
+    if system is None:
+        candidates = custom_image_systems(path)
+        if len(candidates) > 1:
+            system = inquirer.select(
+                message="This OS is used by more than one game series. Which software should be installed with it?",
+                choices=[Choice(value=s, name=SYSTEM_LABEL.get(s, s)) for s in candidates],
+                default=firmware_system(path),
+            ).execute()
+    selection = FirmwareSelection.from_custom(path, system)
+    describe_selection(selection)
+    return selection
+
+
+def confirm_risky_flash():
+    """Ask before erasing boards a custom image cannot be shown to fit."""
+    return bool(inquirer.confirm(message="Erase the board(s) and flash this firmware anyway?", default=False).execute())
+
+
 def describe_selection(selection):
     """Print which OS image will be used for each board type."""
     label = SYSTEM_LABEL.get(selection.system, selection.system)
@@ -95,7 +123,7 @@ def describe_selection(selection):
         path = next(iter(selection.images.values()))
         targets = " / ".join(processor_label(p) for p in selection.images)
         ui.step(f"custom firmware: {os.path.basename(path)} (targets {targets})")
-        ui.detail(f"software series inferred from filename: {label}")
+        ui.detail(f"software series: {label}")
         return
     ui.step(f"{label} OS - image used per board type:")
     for processor, path in selection.images.items():
@@ -149,13 +177,18 @@ def report_and_guard_boards(selection):
       - a mixed batch (Pico W + Pico 2 W together) is rejected -- flash one
         board type at a time;
       - a bundled series with no OS image for a detected chip is rejected;
-      - a custom image whose target chip doesn't match warns and asks.
+      - a custom image whose target chip doesn't match warns and asks; a yes
+        is remembered for this batch so the bootloader check does not ask
+        about the same mismatch twice.
 
     Returns ``(proceed, infos)`` where ``infos`` is the list of identity dicts
     for the boards that were successfully identified. Boards already in
     bootloader mode cannot be queried over the REPL and are skipped here; they
     are checked again from their bootloader drive before anything is wiped.
     """
+    if selection is not None:
+        selection.accepted_mismatches = set()
+
     ports = Ray.find_board_ports()
     if not ports:
         # Nothing running to identify (e.g. all boards already in bootloader).
@@ -164,7 +197,7 @@ def report_and_guard_boards(selection):
         return True, []
 
     ui.heading("Detecting boards")
-    mismatch = False
+    mismatched = set()
     infos = []
     for port in ports:
         info = _identify_with_retry(port, on_wait=lambda port=port: ui.detail(f"{port}: waiting for the board to finish booting (this can take up to a minute)..."))
@@ -198,7 +231,7 @@ def report_and_guard_boards(selection):
         if processor and processor not in selection.images:
             if selection.custom:
                 ui.warning(f"selected firmware does not target {processor_label(processor)}.", indent=2)
-                mismatch = True
+                mismatched.add(processor)
             else:
                 label = SYSTEM_LABEL.get(selection.system, selection.system)
                 ui.error(f"No {label} OS is bundled for {processor_label(processor)} boards.", indent=2)
@@ -211,8 +244,10 @@ def report_and_guard_boards(selection):
         ui.detail("Flash one board type at a time: unplug the other type and run again.", indent=2)
         return False, infos
 
-    if mismatch:
+    if mismatched:
         proceed = bool(inquirer.confirm(message="One or more boards do not match the selected firmware. Flash anyway?", default=False).execute())
+        if proceed:
+            selection.accepted_mismatches = mismatched
         return proceed, infos
     return True, infos
 
