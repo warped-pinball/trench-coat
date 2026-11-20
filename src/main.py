@@ -7,16 +7,18 @@ import traceback
 
 from src import __version__, ui
 from src.core import (
-    FirmwareSelection,
+    SYSTEM_UPDATE_ASSET,
     flash_firmware,
     flash_software,
     list_rpi_rp2_drives,
     system_for_boards,
 )
 from src.interactive import (
+    confirm_risky_flash,
     display_welcome,
     prompt_next_action,
     report_and_guard_boards,
+    select_custom_firmware,
     select_firmware_and_system,
     select_software,
 )
@@ -30,6 +32,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Flash firmware and software to devices")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--firmware", help="Path to firmware UF2 file")
+    parser.add_argument("--system", choices=sorted(SYSTEM_UPDATE_ASSET), help="Game series the --firmware image is for, when its filename does not settle it")
     parser.add_argument("--software", help="Path to software file")
     parser.add_argument("--skip-firmware", action="store_true", help="Skip firmware flashing")
     parser.add_argument("--once", action="store_true", help="Flash only once and exit")
@@ -40,6 +43,8 @@ def parse_arguments():
     # Check for incompatible options
     if args.firmware and args.skip_firmware:
         parser.error("--firmware and --skip-firmware cannot be used together")
+    if args.system and not args.firmware:
+        parser.error("--system only applies together with --firmware")
 
     # if listen-after is set, set once to true
     if args.listen_after:
@@ -125,7 +130,7 @@ def choose_firmware_and_software(args):
     system = None
     if not args.skip_firmware:
         if args.firmware:
-            firmware = FirmwareSelection.from_custom(args.firmware)
+            firmware = select_custom_firmware(args.firmware, args.system)
             system = firmware.system
         else:
             firmware, system = select_firmware_and_system()
@@ -159,7 +164,7 @@ def main():
             software = select_software(system_for_boards(infos))
 
         if firmware:
-            flash_firmware(firmware)
+            flash_firmware(firmware, confirm=confirm_risky_flash)
             wait_for_n_devices(total_boards)
 
         flash_software(software)

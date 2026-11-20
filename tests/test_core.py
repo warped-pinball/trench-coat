@@ -4,6 +4,7 @@ import struct
 
 import pytest
 
+import src.core as core
 from src.core import (
     DEFAULT_SYSTEM,
     SYSTEM_LABEL,
@@ -11,11 +12,15 @@ from src.core import (
     FirmwarePlanError,
     FirmwareSelection,
     choose_batch_firmware,
+    custom_flash_concerns,
+    custom_image_systems,
     find_system_images,
     firmware_system,
+    flash_firmware,
     get_files_from_update_file,
     list_bundled_uf2,
     read_drive_info,
+    read_drive_processor,
     system_for_boards,
     uf2_target_processor,
 )
@@ -223,8 +228,140 @@ class TestChooseBatchFirmware:
         assert choose_batch_firmware(custom, drives("rp2040"))[0] == "mine.uf2"
         assert choose_batch_firmware(custom, drives(None))[0] == "mine.uf2"
 
+    def test_custom_image_refuses_a_part_identified_batch(self):
+        # The post-wipe re-check would reject the unreadable drive after every
+        # board had been erased, so it has to be refused up front.
+        custom = FirmwareSelection("sys11", {"rp2350": "mine.uf2"}, custom=True)
+        with pytest.raises(FirmwarePlanError, match="Could not tell"):
+            choose_batch_firmware(custom, drives("rp2350", None))
+
+
+class TestCustomFlashConcerns:
+    def custom(self, tmp_path, families):
+        path = write_uf2(tmp_path, "mine.uf2", families)
+        return FirmwareSelection.from_custom(path), path
+
+    def test_bundled_series_has_none(self):
+        sel = FirmwareSelection("wpc", {"rp2350": "wpc.uf2"})
+        assert custom_flash_concerns(sel, "wpc.uf2", "rp2350") == []
+
+    def test_matching_custom_image_has_none(self, tmp_path):
+        sel, path = self.custom(tmp_path, [RP2350_ARM_S_FAMILY])
+        assert custom_flash_concerns(sel, path, "rp2350") == []
+
+    def test_universal_image_on_known_board_has_none(self, tmp_path):
+        sel, path = self.custom(tmp_path, [RP2040_FAMILY, ABSOLUTE_FAMILY])
+        assert custom_flash_concerns(sel, path, "rp2040") == []
+
+    def test_chip_mismatch(self, tmp_path):
+        sel, path = self.custom(tmp_path, [RP2350_ARM_S_FAMILY])
+        (concern,) = custom_flash_concerns(sel, path, "rp2040")
+        assert "built for Pico 2 W" in concern and "Pico W (RP2040)" in concern
+
+    def test_unidentified_board(self, tmp_path):
+        sel, path = self.custom(tmp_path, [RP2350_ARM_S_FAMILY])
+        (concern,) = custom_flash_concerns(sel, path, None)
+        assert "Could not tell" in concern
+
+    def test_image_with_no_family_id(self, tmp_path):
+        sel, path = self.custom(tmp_path, [])
+        (concern,) = custom_flash_concerns(sel, path, "rp2040")
+        assert "does not say which chip" in concern
+
+
+class Aborted(Exception):
+    pass
+
+
+class TestFlashFirmwareConfirmation:
+    """A board already in bootloader mode skips the running-board prompt, so
+    flash_firmware has to ask before it erases anything."""
+
+    @pytest.fixture
+    def bench(self, tmp_path, monkeypatch):
+        drive = write_info(tmp_path, "drive", PICO_W_INFO)
+        copies = []
+
+        def abort(*a, **k):
+            raise Aborted()
+
+        monkeypatch.setattr(core, "get_all_boards_into_bootloader", lambda: None)
+        monkeypatch.setattr(core, "list_rpi_rp2_drives", lambda: [drive])
+        monkeypatch.setattr(core, "graceful_exit", abort)
+        monkeypatch.setattr(core.time, "sleep", abort)  # first thing after the checks
+        monkeypatch.setattr(core.shutil, "copy", lambda *a: copies.append(a))
+        return copies
+
+    def mismatched(self, tmp_path):
+        return FirmwareSelection.from_custom(write_uf2(tmp_path, "mine.uf2", [RP2350_ARM_S_FAMILY]))
+
+    def test_declined_mismatch_erases_nothing(self, tmp_path, bench):
+        asked = []
+        with pytest.raises(Aborted):
+            flash_firmware(self.mismatched(tmp_path), confirm=lambda: asked.append(1) or False)
+        assert asked == [1] and bench == []
+
+    def test_no_way_to_ask_erases_nothing(self, tmp_path, bench, monkeypatch):
+        monkeypatch.setattr(core.time, "sleep", lambda s: pytest.fail("reached the wipe"))
+        with pytest.raises(Aborted):
+            flash_firmware(self.mismatched(tmp_path))
+        assert bench == []
+
+    def test_accepted_mismatch_goes_ahead(self, tmp_path, bench):
+        with pytest.raises(Aborted):  # the stubbed sleep, i.e. past the checks
+            flash_firmware(self.mismatched(tmp_path), confirm=lambda: True)
+
+    def test_mismatch_accepted_earlier_is_not_asked_again(self, tmp_path, bench):
+        selection = self.mismatched(tmp_path)
+        selection.accepted_mismatches = {"rp2040"}
+        with pytest.raises(Aborted):
+            flash_firmware(selection, confirm=lambda: pytest.fail("asked twice"))
+
+    def test_unknown_image_is_asked_even_after_an_earlier_yes(self, tmp_path, bench):
+        selection = FirmwareSelection.from_custom(write_uf2(tmp_path, "mine.uf2", []))
+        selection.accepted_mismatches = {"rp2040"}
+        asked = []
+        with pytest.raises(Aborted):
+            flash_firmware(selection, confirm=lambda: asked.append(1) or False)
+        assert asked == [1] and bench == []
+
+
+class TestReadDriveProcessor:
+    def test_retries_until_the_drive_answers(self, tmp_path, monkeypatch):
+        answers = iter([None, None, "rp2350"])
+        monkeypatch.setattr(core, "read_drive_info", lambda d: {"processor": next(answers)})
+        monkeypatch.setattr(core.time, "sleep", lambda s: None)
+        assert read_drive_processor("E:") == "rp2350"
+
+    def test_gives_up_at_the_deadline(self, monkeypatch):
+        clock = iter([0, 1, 100])
+        monkeypatch.setattr(core, "read_drive_info", lambda d: {"processor": None})
+        monkeypatch.setattr(core.time, "sleep", lambda s: None)
+        monkeypatch.setattr(core.time, "monotonic", lambda: next(clock))
+        assert read_drive_processor("E:", timeout=15) is None
+
+
+class TestCustomImageSystems:
+    def test_data_east_image_is_shared_with_sys11(self):
+        assert custom_image_systems("/x/Vector_DataEast_v1.uf2") == ["sys11", "data_east"]
+
+    def test_wpc_image_is_shared_with_em(self):
+        assert custom_image_systems("Vector_WPC_v5.uf2") == ["wpc", "em"]
+
+    def test_unshared_images(self):
+        assert custom_image_systems("vector_system_11_and_9_v4.uf2") == ["sys11"]
+        assert custom_image_systems("Vector_Classics_V1.uf2") == ["classic"]
+
+    def test_unrecognised_name(self):
+        assert custom_image_systems("mine.uf2") == []
+
 
 class TestFirmwareSelectionFromCustom:
+    def test_named_series_wins_over_the_filename(self, tmp_path):
+        path = write_uf2(tmp_path, "Vector_DataEast_v1.uf2", [RP2350_ARM_S_FAMILY])
+        assert FirmwareSelection.from_custom(path).system == "data_east"
+        assert FirmwareSelection.from_custom(path, "sys11").system == "sys11"
+
     def test_targets_its_own_chip(self, tmp_path):
         path = write_uf2(tmp_path, "mine.uf2", [RP2040_FAMILY])
         sel = FirmwareSelection.from_custom(path)

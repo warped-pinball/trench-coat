@@ -72,10 +72,17 @@ def choose_batch_firmware(selection, drive_infos):
             ["Flash one board type at a time: unplug the other type and run again."],
         )
 
-    if unknown and not selection.custom:
+    # A bundled series needs the chip to pick its image. A custom image may be
+    # flashed onto a batch nobody could identify (after an explicit
+    # confirmation), but never onto a part-identified batch: the re-check after
+    # the wipe would refuse the unreadable drive once every board is erased.
+    if unknown and (known or not selection.custom):
         raise FirmwarePlanError(
             f"Could not tell which Pico is in bootloader drive(s) {', '.join(unknown)}.",
-            ["The drive's INFO_UF2.TXT did not report a known Board-ID (expected RPI-RP2 or RP2350)."],
+            [
+                "The drive's INFO_UF2.TXT did not report a known Board-ID (expected RPI-RP2 or RP2350).",
+                "Unplug and replug the board(s), then run the program again.",
+            ],
         )
 
     processor = next(iter(known), None)
@@ -89,6 +96,48 @@ def choose_batch_firmware(selection, drive_infos):
     return firmware_path, processor
 
 
+def custom_flash_concerns(selection, firmware_path, batch_processor):
+    """Reasons a custom image might not suit the batch it is about to replace.
+
+    Returns a list of user-facing sentences, empty when the image is known to
+    fit the connected board(s). Bundled series never have concerns: their
+    image is picked from the detected chip."""
+    if not selection.custom:
+        return []
+    name = os.path.basename(firmware_path)
+    target = uf2_target_processor(firmware_path)
+    concerns = []
+    if batch_processor is None:
+        concerns.append("Could not tell which Pico is connected, so this firmware cannot be checked against it.")
+    if target is None:
+        concerns.append(f"{name} does not say which chip it is built for (no recognizable UF2 family ID).")
+    elif target in PROCESSOR_LABEL and batch_processor is not None and target != batch_processor:
+        concerns.append(f"{name} is built for {processor_label(target)}, but the connected board is {processor_label(batch_processor)}.")
+    return concerns
+
+
+def _mismatch_already_accepted(selection, firmware_path, batch_processor):
+    """True when the only concern is a chip mismatch the user already accepted
+    for this batch while the boards were still running."""
+    if batch_processor is None or uf2_target_processor(firmware_path) is None:
+        return False
+    return batch_processor in selection.accepted_mismatches
+
+
+def read_drive_processor(drive, timeout=15.0, delay=0.5):
+    """Read a bootloader drive's chip, retrying while it cannot be identified.
+
+    A drive that has only just re-mounted (after a wipe) can briefly fail to
+    serve INFO_UF2.TXT, so one failed read is not proof of a different board.
+    Returns the processor, or ``None`` if it is still unknown at ``timeout``."""
+    deadline = time.monotonic() + timeout
+    while True:
+        processor = read_drive_info(drive)["processor"]
+        if processor is not None or time.monotonic() >= deadline:
+            return processor
+        time.sleep(delay)
+
+
 def _report_drives(drives):
     """Read and print the chip/bootloader diagnostics for each drive."""
     infos = {}
@@ -100,12 +149,16 @@ def _report_drives(drives):
     return infos
 
 
-def flash_firmware(selection):
+def flash_firmware(selection, confirm=None):
     """Core function to flash firmware to devices.
 
     ``selection`` is a ``FirmwareSelection``; the actual UF2 image is chosen
     per batch from the chip each bootloader drive reports, *before* any
     board is wiped.
+
+    ``confirm`` is called with no arguments and returns ``True`` to go ahead
+    when a custom image cannot be shown to fit the connected board(s). Without
+    it, such a batch is refused rather than erased.
     """
     ui.heading("Flashing firmware")
     get_all_boards_into_bootloader()
@@ -124,8 +177,14 @@ def flash_firmware(selection):
     target = uf2_target_processor(firmware_path)
     ui.success(f"Selected OS image for {processor_label(batch_processor)}: {os.path.basename(firmware_path)}")
     ui.detail(f"image targets: {processor_label(target) if target in PROCESSOR_LABEL else (target or 'unknown')}")
-    if batch_processor is None or (target in PROCESSOR_LABEL and target != batch_processor):
-        ui.warning("custom firmware may not match this board's chip - flashing anyway as requested.")
+    concerns = custom_flash_concerns(selection, firmware_path, batch_processor)
+    for concern in concerns:
+        ui.warning(concern)
+    if concerns:
+        if _mismatch_already_accepted(selection, firmware_path, batch_processor):
+            ui.detail("flashing anyway, as confirmed above.", indent=2)
+        elif confirm is None or not confirm():
+            _abort_before_wipe("Flashing cancelled.")
 
     # wipe the board with nuke.uf2
     nuke_path = [path for path in list_bundled_uf2() if "nuke.uf2" in path]
@@ -167,17 +226,23 @@ def flash_firmware(selection):
     if len(bootloader_drives) == len(list_rpi_rp2_drives()):
         bootloader_drives = list_rpi_rp2_drives()
 
-    # Drive letters can change after a wipe, so re-check each drive's chip
-    # right before copying rather than trusting the earlier mapping.
-    for drive in bootloader_drives:
-        processor = read_drive_info(drive)["processor"]
-        if processor != batch_processor and batch_processor is not None:
-            ui.error(f"{drive} now reports {processor_label(processor)}, expected {processor_label(batch_processor)}.")
-            ui.detail("Unplug all boards and run the program again.", indent=2)
-            graceful_exit()
-
     # give the drives a moment to settle
     time.sleep(5)
+
+    # Drive letters can change after a wipe, so re-check each drive's chip
+    # right before copying rather than trusting the earlier mapping. The
+    # boards are already erased here, so a drive that is merely slow to
+    # answer is retried before it counts as a different board.
+    if batch_processor is not None:
+        for drive in bootloader_drives:
+            processor = read_drive_processor(drive)
+            if processor != batch_processor:
+                if processor is None:
+                    ui.error(f"{drive} could not be identified after the wipe (expected {processor_label(batch_processor)}).")
+                else:
+                    ui.error(f"{drive} now reports {processor_label(processor)}, expected {processor_label(batch_processor)}.")
+                ui.detail("The board(s) have been erased and have no OS yet. Unplug all boards and run the program again to finish.", indent=2)
+                graceful_exit()
 
     for drive in bootloader_drives:
         ui.step(f"flashing {os.path.basename(firmware_path)} to {drive}")
@@ -369,6 +434,18 @@ def processor_label(processor):
     return PROCESSOR_LABEL.get(processor, "unknown board")
 
 
+def custom_image_systems(firmware_path):
+    """Game series that boot the OS a custom image's filename names.
+
+    One OS can serve several series (the Data East image also runs System 9 /
+    11 on the Pico 2 W, and the WPC image also runs EM), so the filename
+    alone does not always say which software belongs with it. Returns the
+    candidate system ids in menu order; more than one means the caller has to
+    ask."""
+    name = os.path.basename(firmware_path or "").lower()
+    return [system for system in SERIES_MENU_ORDER if any(keyword in name for keyword in SYSTEM_FIRMWARE_KEYWORDS.get(system, {}).values())]
+
+
 def find_system_images(system, bundled_paths):
     """Return ``{processor: uf2_path}`` for the bundled OS images of ``system``.
 
@@ -409,19 +486,24 @@ class FirmwareSelection:
         self.system = system
         self.images = dict(images)
         self.custom = custom
+        # Board chips the user agreed to flash a mismatched custom image onto,
+        # for the batch currently connected (reset for every batch).
+        self.accepted_mismatches = set()
 
     @classmethod
     def bundled(cls, system, bundled_paths):
         return cls(system, find_system_images(system, bundled_paths))
 
     @classmethod
-    def from_custom(cls, path):
+    def from_custom(cls, path, system=None):
+        """``system`` names the software series; without it the series is
+        inferred from the filename."""
         target = uf2_target_processor(path)
         if target in PROCESSOR_LABEL:
             images = {target: path}
         else:  # universal / unknown image: usable on either chip
             images = {p: path for p in PROCESSOR_LABEL}
-        return cls(firmware_system(path), images, custom=True)
+        return cls(system or firmware_system(path), images, custom=True)
 
     @property
     def available(self):
