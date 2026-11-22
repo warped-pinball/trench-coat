@@ -104,6 +104,8 @@ class TestFirmwareSystem:
             ("vector_data_east_v2.uf2", "data_east"),
             ("vector-data-east.uf2", "data_east"),
             ("Vector_Classics_V1.uf2", "classic"),
+            ("vector_Whitestar_V1.uf2", "whitestar"),
+            ("Vector_White_Star_v2.uf2", "whitestar"),
             ("vector_system_11_and_9_v4.uf2", "sys11"),
             ("something_else.uf2", DEFAULT_SYSTEM),
             ("", DEFAULT_SYSTEM),
@@ -124,6 +126,7 @@ class TestFindSystemFirmware:
         "/app/uf2/Vector_DataEast_v1.uf2",
         "/app/uf2/vector_system_11_and_9_v4.uf2",
         "/app/uf2/Vector_Classics_V1.uf2",
+        "/app/uf2/vector_Whitestar_V1.uf2",
     ]
 
     def test_each_bundled_system(self):
@@ -131,12 +134,13 @@ class TestFindSystemFirmware:
         assert find_system_firmware("wpc", self.BUNDLED).endswith("Vector_WPC_v5.uf2")
         assert find_system_firmware("data_east", self.BUNDLED).endswith("Vector_DataEast_v1.uf2")
         assert find_system_firmware("classic", self.BUNDLED).endswith("Vector_Classics_V1.uf2")
+        assert find_system_firmware("whitestar", self.BUNDLED).endswith("vector_Whitestar_V1.uf2")
 
     def test_em_shares_wpc_os(self):
         assert find_system_firmware("em", self.BUNDLED).endswith("Vector_WPC_v5.uf2")
 
     def test_unreleased_system(self):
-        assert find_system_firmware("whitestar", self.BUNDLED) is None
+        assert find_system_firmware("whitestar", self.BUNDLED[:-1]) is None
 
     def test_unknown_system(self):
         assert find_system_firmware("not_a_system", self.BUNDLED) is None
