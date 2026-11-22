@@ -67,12 +67,13 @@ Do not plug in the Vector board yet — the prompts below appear with nothing co
   WPC
   EM
   DataEast
+  WhiteStar
   Classic
   Custom firmware...
   Exit
 ```
 
-For a WPC-era machine, select **WPC**. For System 9 or System 11, select **Sys11**. For a classic Bally or Stern solid-state game, select **Classic**. Series marked "(coming soon)" don't have a released OS yet and can't be selected.
+For a WPC-era machine, select **WPC**. For System 9 or System 11, select **Sys11**. For a classic Bally or Stern solid-state game, select **Classic**. For a Sega or Stern Whitestar-era game, select **WhiteStar**. Series marked "(coming soon)" don't have a released OS yet and can't be selected.
 
 ### Example: choosing the software version
 

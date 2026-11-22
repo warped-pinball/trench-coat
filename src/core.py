@@ -205,10 +205,13 @@ _FIRMWARE_SYSTEM_KEYWORDS = [
     ("data_east", "data_east"),
     ("data-east", "data_east"),
     ("classic", "classic"),
+    ("whitestar", "whitestar"),
+    ("white_star", "whitestar"),
+    ("white-star", "whitestar"),
     # System 9 / 11 ("Vector_system_11_and_9_v4.uf2") is the default below.
     # NOTE: only keywords for bundled, unambiguous firmware are listed here.
     # Avoid loose tokens like "em" -- it is a substring of "system" and would
-    # mis-match the sys11 image. Add em/whitestar with a safe keyword
+    # mis-match the sys11 image. Add em with a safe keyword
     # (e.g. "_em") when their firmware images are actually bundled.
 ]
 
@@ -255,17 +258,18 @@ def firmware_system(firmware_path):
 # Several systems can share one OS -- EM games run on the WPC OS -- so this maps
 # the system to the OS it boots, matched by keyword in the UF2 filename. A
 # system whose keyword matches no bundled UF2 is treated as "not available yet"
-# (e.g. WhiteStar has no keyword here until its OS is bundled).
+# (the series is shown as "coming soon").
 SYSTEM_FIRMWARE_KEYWORD = {
     "sys11": "system",  # Vector_system_11_and_9_v4.uf2
     "wpc": "wpc",  # Vector_WPC_v5.uf2
     "em": "wpc",  # EM uses the WPC OS
     "data_east": "dataeast",  # Vector_DataEast_v1.uf2
     "classic": "classic",  # Vector_Classics_V1.uf2
+    "whitestar": "whitestar",  # vector_Whitestar_V1.uf2
 }
 
 # Order the game series are offered in the selection menu.
-SERIES_MENU_ORDER = ["sys11", "wpc", "em", "data_east", "classic"]
+SERIES_MENU_ORDER = ["sys11", "wpc", "em", "data_east", "whitestar", "classic"]
 
 
 def find_system_firmware(system, bundled_paths):
